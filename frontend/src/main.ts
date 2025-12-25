@@ -60,15 +60,15 @@ const I18N: Record<Lang, Record<string, string>> = {
 }
 
 const env = {
-  ionToken: import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined,
-  photorealisticAssetId: Number(import.meta.env.VITE_ION_PHOTOREALISTIC_ASSET_ID ?? ''),
-  imageryAssetId: Number(import.meta.env.VITE_ION_IMAGERY_ASSET_ID ?? ''),
-  supabaseUrl: import.meta.env.VITE_SUPABASE_URL as string | undefined,
-  supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined,
-  turnstileSiteKey: import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined,
-  apiBase: import.meta.env.VITE_API_BASE as string | undefined, // optional override
-  revealDateIso: (import.meta.env.VITE_REVEAL_AT_ISO as string | undefined) ?? '2026-01-06T00:00:00+01:00',
-  demoKey: import.meta.env.VITE_DEMO_KEY as string | undefined, // used only for local testing
+  ionToken: (import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined)?.trim(),
+  photorealisticAssetId: Number((import.meta.env.VITE_ION_PHOTOREALISTIC_ASSET_ID as string | undefined)?.trim() ?? ''),
+  imageryAssetId: Number((import.meta.env.VITE_ION_IMAGERY_ASSET_ID as string | undefined)?.trim() ?? ''),
+  supabaseUrl: (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim(),
+  supabaseAnonKey: (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim(),
+  turnstileSiteKey: (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined)?.trim(),
+  apiBase: (import.meta.env.VITE_API_BASE as string | undefined)?.trim(), // optional override
+  revealDateIso: (import.meta.env.VITE_REVEAL_AT_ISO as string | undefined)?.trim() ?? '2026-01-06T00:00:00+01:00',
+  demoKey: (import.meta.env.VITE_DEMO_KEY as string | undefined)?.trim(), // used only for local testing
 }
 
 const ORNAMENTS = [
@@ -251,6 +251,10 @@ async function init() {
 `
 
   const t = (k: string) => I18N[lang][k] ?? k
+  const status = $('#status') as HTMLDivElement
+  const setStatus = (msg: string) => {
+    status.textContent = msg
+  }
 
   const renderTexts = () => {
     $('#title').textContent = t('title')
@@ -304,14 +308,13 @@ async function init() {
 
   // Cesium init
   if (!env.ionToken) {
-    ;($('#status') as HTMLDivElement).textContent = 'Missing VITE_CESIUM_ION_TOKEN'
+    setStatus('Missing VITE_CESIUM_ION_TOKEN (check Vercel env vars + redeploy)')
     return
   }
   const has3DTiles = Number.isFinite(env.photorealisticAssetId) && env.photorealisticAssetId > 0
   const hasImagery = Number.isFinite(env.imageryAssetId) && env.imageryAssetId > 0
   if (!has3DTiles && !hasImagery) {
-    ;($('#status') as HTMLDivElement).textContent =
-      'Missing VITE_ION_PHOTOREALISTIC_ASSET_ID (3D Tiles) or VITE_ION_IMAGERY_ASSET_ID (Imagery)'
+    setStatus('Missing VITE_ION_PHOTOREALISTIC_ASSET_ID (3D Tiles) or VITE_ION_IMAGERY_ASSET_ID (Imagery)')
     return
   }
 
@@ -336,13 +339,31 @@ async function init() {
   viewer.scene.backgroundColor = undefined as any
 
   if (has3DTiles) {
-    const tileset = await Cesium3DTileset.fromIonAssetId(env.photorealisticAssetId)
-    viewer.scene.primitives.add(tileset)
+    try {
+      const tileset = await Cesium3DTileset.fromIonAssetId(env.photorealisticAssetId)
+      viewer.scene.primitives.add(tileset)
+    } catch (e) {
+      // Typical causes: wrong asset id, token missing scopes, token revoked, or value contains quotes.
+      viewer.scene.globe.show = true
+      setStatus(
+        `Failed to load Photorealistic 3D Tiles. Check VITE_CESIUM_ION_TOKEN + VITE_ION_PHOTOREALISTIC_ASSET_ID. Details: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      )
+    }
   } else if (hasImagery) {
-    // Clean default imagery (Bing) and use the provided ion imagery asset.
-    viewer.imageryLayers.removeAll()
-    const provider = await IonImageryProvider.fromAssetId(env.imageryAssetId)
-    viewer.imageryLayers.addImageryProvider(provider)
+    try {
+      // Clean default imagery (Bing) and use the provided ion imagery asset.
+      viewer.imageryLayers.removeAll()
+      const provider = await IonImageryProvider.fromAssetId(env.imageryAssetId)
+      viewer.imageryLayers.addImageryProvider(provider)
+    } catch (e) {
+      setStatus(
+        `Failed to load ion imagery. Check VITE_CESIUM_ION_TOKEN + VITE_ION_IMAGERY_ASSET_ID. Details: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      )
+    }
   }
 
   // Tree (placeholder: you will drop models into /public/models/)
@@ -444,7 +465,6 @@ async function init() {
   const hangBtn = $('#hangBtn') as HTMLButtonElement
   const downloadBtn = $('#downloadBtn') as HTMLButtonElement
   const wishInput = $('#wishInput') as HTMLTextAreaElement
-  const status = $('#status') as HTMLDivElement
 
   if (env.turnstileSiteKey) {
     await injectTurnstileScript()
@@ -458,7 +478,7 @@ async function init() {
       },
     })
   } else {
-    status.textContent = 'Missing VITE_TURNSTILE_SITE_KEY (captcha disabled)'
+    setStatus('Missing VITE_TURNSTILE_SITE_KEY (captcha disabled)')
   }
 
   // Optional: click tree to refocus
@@ -468,15 +488,15 @@ async function init() {
   hangBtn.onclick = async () => {
     const text = wishInput.value.trim()
     if (!text || (env.turnstileSiteKey && !turnstileToken)) {
-      status.textContent = t('errorMissing')
+      setStatus(t('errorMissing'))
       return
     }
     if (!env.supabaseUrl || !env.supabaseAnonKey) {
-      status.textContent = 'Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY'
+      setStatus('Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY')
       return
     }
 
-    status.textContent = ''
+    setStatus('')
     hangBtn.disabled = true
     hangBtn.textContent = t('hanging')
     downloadBtn.disabled = true
@@ -515,7 +535,7 @@ async function init() {
       status.textContent = t('done')
       wishInput.value = ''
     } catch {
-      status.textContent = t('errorServer')
+      setStatus(t('errorServer'))
     } finally {
       hangBtn.disabled = false
       hangBtn.textContent = t('hang')
