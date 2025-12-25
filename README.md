@@ -18,6 +18,8 @@ A small public, anonymous-ish New Year experience:
 
 - `VITE_CESIUM_ION_TOKEN`
 - `VITE_ION_PHOTOREALISTIC_ASSET_ID` (Google Photorealistic 3D Tiles, via ion)
+- If you don't have the 3D Tiles asset id, you can use imagery instead:
+  - `VITE_ION_IMAGERY_ASSET_ID`
 
 ### Supabase
 
@@ -82,6 +84,13 @@ Deploy `frontend/` as a Vercel project:
 - Add the `VITE_*` env vars in Vercel project settings
 
 Supabase Edge Functions stay hosted on Supabase.
+
+### Keep the repo private (recommended)
+
+Do **not** commit real tokens/keys. Keep the GitHub repo private and set secrets in:
+
+- Vercel project env vars: `VITE_*`
+- Supabase Edge Function secrets: `SUPABASE_*`, `TURNSTILE_SECRET_KEY`, `REVEAL_AT_ISO`
 
 ## Notes on “anonymity”
 
