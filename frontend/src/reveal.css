@@ -1,0 +1,69 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  background: #070b10;
+  color: #eaf1ff;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+.page {
+  min-height: 100%;
+  padding: 28px 18px 48px;
+  background: radial-gradient(900px 600px at 30% 10%, rgba(103, 231, 255, 0.14), transparent 60%),
+    radial-gradient(900px 600px at 70% 90%, rgba(255, 196, 103, 0.12), transparent 60%), #070b10;
+}
+
+.header {
+  max-width: 980px;
+  margin: 0 auto 16px;
+}
+
+.kicker {
+  font-size: 12px;
+  opacity: 0.7;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 10px 0 8px;
+  letter-spacing: -0.02em;
+}
+
+.muted {
+  opacity: 0.72;
+}
+
+.card {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(10, 14, 20, 0.65);
+}
+
+.cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: baseline;
+  justify-content: center;
+}
+
+.word {
+  display: inline-block;
+  padding: 4px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  user-select: none;
+  white-space: nowrap;
+}
+
+
