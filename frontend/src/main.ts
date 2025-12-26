@@ -84,6 +84,13 @@ const env = {
   ionTreeAssetId: Number((import.meta.env.VITE_ION_TREE_ASSET_ID as string | undefined)?.trim() ?? ''),
   ionTreeGeojsonAssetId: Number((import.meta.env.VITE_ION_TREE_GEOJSON_ASSET_ID as string | undefined)?.trim() ?? ''),
 
+  ionExtraTreesModelAssetId: Number((import.meta.env.VITE_ION_EXTRA_TREES_MODEL_ASSET_ID as string | undefined)?.trim() ?? ''),
+  ionExtraTreesGeojsonAssetId: Number((import.meta.env.VITE_ION_EXTRA_TREES_GEOJSON_ASSET_ID as string | undefined)?.trim() ?? ''),
+  extraTreesScale: Number((import.meta.env.VITE_EXTRA_TREES_SCALE as string | undefined)?.trim() ?? ''),
+  extraTreesGroundOffsetM: Number((import.meta.env.VITE_EXTRA_TREES_GROUND_OFFSET_M as string | undefined)?.trim() ?? ''),
+  extraTreesSampleRadiusM: Number((import.meta.env.VITE_EXTRA_TREES_GROUND_SAMPLE_RADIUS_M as string | undefined)?.trim() ?? ''),
+  extraTreesLimit: Number((import.meta.env.VITE_EXTRA_TREES_LIMIT as string | undefined)?.trim() ?? ''),
+
   cameraLat: Number((import.meta.env.VITE_CAMERA_LAT as string | undefined)?.trim() ?? ''),
   cameraLon: Number((import.meta.env.VITE_CAMERA_LON as string | undefined)?.trim() ?? ''),
 }
@@ -415,6 +422,55 @@ async function init() {
     }
   }
 
+  async function sampleGroundHeightMinForPoints(
+    pointsLonLat: Array<{ lon: number; lat: number }>,
+    radiusM: number,
+  ): Promise<Array<number | null>> {
+    if (!pointsLonLat.length) return []
+    const offsets = [-radiusM, 0, radiusM]
+    const cartos: Cartographic[] = []
+    const meta: Array<{ pointIdx: number; sampleIdx: number }> = []
+
+    for (let i = 0; i < pointsLonLat.length; i++) {
+      const { lon, lat } = pointsLonLat[i]
+      const center = Cartesian3.fromDegrees(lon, lat, 0)
+      const enu = Transforms.eastNorthUpToFixedFrame(center)
+      let sampleIdx = 0
+      for (const e of offsets) {
+        for (const n of offsets) {
+          const p = Matrix4.multiplyByPoint(enu, new Cartesian3(e, n, 0), new Cartesian3())
+          const c = viewer.scene.globe.ellipsoid.cartesianToCartographic(p)
+          if (c) {
+            c.height = 0
+            cartos.push(c)
+            meta.push({ pointIdx: i, sampleIdx })
+          }
+          sampleIdx++
+        }
+      }
+    }
+
+    const result = new Array<number | null>(pointsLonLat.length).fill(null)
+    const mins = new Array<number>(pointsLonLat.length).fill(Number.POSITIVE_INFINITY)
+
+    try {
+      const updated = await viewer.scene.sampleHeightMostDetailed(cartos)
+      for (let i = 0; i < updated.length; i++) {
+        const h = updated[i]?.height
+        if (typeof h === 'number' && Number.isFinite(h)) {
+          const idx = meta[i]?.pointIdx
+          if (idx != null) mins[idx] = Math.min(mins[idx], h)
+        }
+      }
+      for (let i = 0; i < mins.length; i++) {
+        if (mins[i] !== Number.POSITIVE_INFINITY) result[i] = mins[i]
+      }
+      return result
+    } catch {
+      return result
+    }
+  }
+
   // Tree (placeholder: you will drop models into /public/models/)
   const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
   const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
@@ -561,6 +617,61 @@ async function init() {
         e instanceof Error ? e.message : String(e)
       }`,
     )
+  }
+
+  // Optional: extra trees (single model instanced at many points from ion GeoJSON)
+  const hasExtraTrees = Number.isFinite(env.ionExtraTreesModelAssetId) && env.ionExtraTreesModelAssetId > 0
+  const hasExtraTreesGeo = Number.isFinite(env.ionExtraTreesGeojsonAssetId) && env.ionExtraTreesGeojsonAssetId > 0
+  if (hasExtraTrees && hasExtraTreesGeo) {
+    try {
+      const ds = await GeoJsonDataSource.load(await IonResource.fromAssetId(env.ionExtraTreesGeojsonAssetId))
+      viewer.dataSources.add(ds)
+      // Hide GeoJSON visuals.
+      for (const e of ds.entities.values) {
+        if (e.billboard) e.billboard.show = new ConstantProperty(false)
+        if (e.label) e.label.show = new ConstantProperty(false)
+        if (e.point) e.point.show = new ConstantProperty(false)
+      }
+
+      const now = JulianDate.now()
+      const pts: Array<{ lon: number; lat: number }> = []
+      for (const e of ds.entities.values) {
+        const p = e.position?.getValue(now)
+        if (!p) continue
+        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(p)
+        if (!carto) continue
+        pts.push({ lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) })
+      }
+
+      const limit = Number.isFinite(env.extraTreesLimit) ? Math.max(1, Math.min(500, env.extraTreesLimit)) : 80
+      const usePts = pts.slice(0, limit)
+
+      const scale = Number.isFinite(env.extraTreesScale) ? env.extraTreesScale : 1.2
+      const offset = Number.isFinite(env.extraTreesGroundOffsetM) ? env.extraTreesGroundOffsetM : 0.8
+      const radius = Number.isFinite(env.extraTreesSampleRadiusM) ? env.extraTreesSampleRadiusM : 4
+
+      const heights = has3DTiles ? await sampleGroundHeightMinForPoints(usePts, radius) : new Array(usePts.length).fill(0)
+
+      const url = await IonResource.fromAssetId(env.ionExtraTreesModelAssetId)
+      for (let i = 0; i < usePts.length; i++) {
+        const { lon, lat } = usePts[i]
+        const h = heights[i]
+        const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset : 0 + offset
+        const pos = Cartesian3.fromDegrees(lon, lat, alt)
+        viewer.entities.add({
+          position: pos,
+          model: {
+            uri: url,
+            scale,
+            // keeps it visible without fiddling with materials
+            minimumPixelSize: 24,
+          },
+        })
+      }
+      setStatus(`Loaded ${usePts.length} extra trees from ion GeoJSON.`)
+    } catch (e) {
+      setStatus(`Failed to load extra trees from ion. Details: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   // Camera presets
