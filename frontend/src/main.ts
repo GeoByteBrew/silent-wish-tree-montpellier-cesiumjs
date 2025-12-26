@@ -321,6 +321,20 @@ function setStoredNumber(key: string, n: number) {
   localStorage.setItem(key, String(n))
 }
 
+function getStoredJson<T>(key: string, fallback: T): T {
+  try {
+    const s = localStorage.getItem(key)
+    if (!s) return fallback
+    return JSON.parse(s) as T
+  } catch {
+    return fallback
+  }
+}
+
+function setStoredJson(key: string, v: unknown) {
+  localStorage.setItem(key, JSON.stringify(v))
+}
+
 async function init() {
   let lang: Lang = (localStorage.getItem('lang') as Lang) || 'fr'
   let selectedOrnament: OrnamentId = 'star'
@@ -777,6 +791,11 @@ async function init() {
       let extraGround =
         getNumberParam('extraGround') ?? getStoredNumber('silentwish_extraGroundM') ?? 0
 
+      // Per-tree Z overrides (meters). Keyed by tree index.
+      const perTreeKey = 'silentwish_extraTreeDeltas'
+      const perTreeDeltas: Record<string, number> = getStoredJson(perTreeKey, {})
+      let selectedTreeIdx: number | null = null
+
       // Apply optional ENU offset in meters before sampling heights (fixes systematic drift from reprojection).
       const computeShiftedPts = (eM: number, nM: number) => {
         const out: Array<{ lon: number; lat: number }> = []
@@ -819,7 +838,8 @@ async function init() {
         for (let i = 0; i < shiftedPts.length; i++) {
           const { lon, lat } = shiftedPts[i]
           const h = heights[i]
-          const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset + extraGround : 0 + offset + extraGround
+          const localDelta = Number.isFinite(perTreeDeltas[String(i)]) ? perTreeDeltas[String(i)] : 0
+          const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset + extraGround + localDelta : 0 + offset + extraGround + localDelta
           const pos = Cartesian3.fromDegrees(lon, lat, alt)
           const id = `extraTree:${i}`
           viewer.entities.add({
@@ -837,14 +857,35 @@ async function init() {
         setStoredNumber('silentwish_extraNorthM', nM)
         setStoredNumber('silentwish_extraScale', extraScale)
         setStoredNumber('silentwish_extraGroundM', extraGround)
+        setStoredJson(perTreeKey, perTreeDeltas)
         setStatus(
           `Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m scale=${extraScale.toFixed(
             2,
-          )} ground=${extraGround.toFixed(2)}m${opts.resample ? ' (resampled)' : ''}`,
+          )} ground=${extraGround.toFixed(2)}m${opts.resample ? ' (resampled)' : ''}${
+            selectedTreeIdx != null ? ` · selected #${selectedTreeIdx} Δz=${(perTreeDeltas[String(selectedTreeIdx)] ?? 0).toFixed(2)}m` : ''
+          }`,
         )
       }
 
       await renderExtraTrees(offEast, offNorth, { resample: true })
+
+      // Click-to-select a single extra tree for per-tree Z adjustments.
+      const pickHandler = new ScreenSpaceEventHandler(viewer.scene.canvas)
+      pickHandler.setInputAction((movement: any) => {
+        const picked = viewer.scene.pick(movement.position)
+        const id = (picked as any)?.id
+        const eid = typeof id?.id === 'string' ? id.id : typeof id === 'string' ? id : null
+        if (eid && eid.startsWith('extraTree:')) {
+          const idx = Number(eid.split(':')[1])
+          if (Number.isFinite(idx)) {
+            selectedTreeIdx = idx
+            void renderExtraTrees(offEast, offNorth, { resample: false })
+          }
+        } else {
+          selectedTreeIdx = null
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+        }
+      }, ScreenSpaceEventType.LEFT_CLICK)
 
       // Keyboard tuning: arrows move the whole set.
       // - arrows: 1m
@@ -885,13 +926,25 @@ async function init() {
 
         // Ground offset tuning (does not require resampling)
         if (ev.key === '[') {
-          extraGround -= ev.shiftKey ? 0.5 : 0.1
+          const step = ev.shiftKey ? 0.5 : 0.1
+          if (selectedTreeIdx != null) {
+            const k = String(selectedTreeIdx)
+            perTreeDeltas[k] = (perTreeDeltas[k] ?? 0) - step
+          } else {
+            extraGround -= step
+          }
           void renderExtraTrees(offEast, offNorth, { resample: false })
           ev.preventDefault()
           return
         }
         if (ev.key === ']') {
-          extraGround += ev.shiftKey ? 0.5 : 0.1
+          const step = ev.shiftKey ? 0.5 : 0.1
+          if (selectedTreeIdx != null) {
+            const k = String(selectedTreeIdx)
+            perTreeDeltas[k] = (perTreeDeltas[k] ?? 0) + step
+          } else {
+            extraGround += step
+          }
           void renderExtraTrees(offEast, offNorth, { resample: false })
           ev.preventDefault()
           return
