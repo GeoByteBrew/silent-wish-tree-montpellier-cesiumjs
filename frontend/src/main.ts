@@ -2,9 +2,13 @@ import './style.css'
 import {
   Cartesian3,
   Cesium3DTileset,
+  ConstantProperty,
+  GeoJsonDataSource,
   HeadingPitchRoll,
   Ion,
   IonImageryProvider,
+  IonResource,
+  JulianDate,
   Math as CesiumMath,
   Matrix4,
   Model,
@@ -74,6 +78,8 @@ const env = {
   treeHeight: Number((import.meta.env.VITE_TREE_HEIGHT as string | undefined)?.trim() ?? ''),
   treeScale: Number((import.meta.env.VITE_TREE_SCALE as string | undefined)?.trim() ?? ''),
   treeHeadingDeg: Number((import.meta.env.VITE_TREE_HEADING_DEG as string | undefined)?.trim() ?? ''),
+  ionTreeAssetId: Number((import.meta.env.VITE_ION_TREE_ASSET_ID as string | undefined)?.trim() ?? ''),
+  ionTreeGeojsonAssetId: Number((import.meta.env.VITE_ION_TREE_GEOJSON_ASSET_ID as string | undefined)?.trim() ?? ''),
 
   cameraLat: Number((import.meta.env.VITE_CAMERA_LAT as string | undefined)?.trim() ?? ''),
   cameraLon: Number((import.meta.env.VITE_CAMERA_LON as string | undefined)?.trim() ?? ''),
@@ -375,7 +381,10 @@ async function init() {
   }
 
   // Tree (placeholder: you will drop models into /public/models/)
+  const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
+  const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
   const treeUrl = '/models/tree.glb'
+
   // Default: L’Écusson, 34000 Montpellier
   let treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136111111111 // 43°36'40.9"N
   let treeLonDeg = Number.isFinite(env.treeLon) ? env.treeLon : 3.8695555555555557 // 3°52'10.4"E
@@ -393,6 +402,47 @@ async function init() {
     treeLatDeg = 43.6119
     treeLonDeg = 3.8730
     setStatus('Tree coordinates invalid; placing tree at Peyrou defaults.')
+  }
+
+  // Optional: load tree location from an ion-hosted GeoJSON point.
+  // This is great to avoid manual lat/lon and keep placement centralized in ion.
+  if (hasIonTreeGeojson) {
+    try {
+      const ds = await GeoJsonDataSource.load(await IonResource.fromAssetId(env.ionTreeGeojsonAssetId))
+      viewer.dataSources.add(ds)
+      // Hide billboards/labels if any; we only need the coordinate.
+      for (const e of ds.entities.values) {
+        if (e.billboard) e.billboard.show = new ConstantProperty(false)
+        if (e.label) e.label.show = new ConstantProperty(false)
+        if (e.point) e.point.show = new ConstantProperty(false)
+      }
+      const now = JulianDate.now()
+      const firstWithPos = ds.entities.values.find((e) => e.position?.getValue(now))
+      const p = firstWithPos?.position?.getValue(now)
+      if (p) {
+        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(p)
+        if (carto) {
+          treeLatDeg = CesiumMath.toDegrees(carto.latitude)
+          treeLonDeg = CesiumMath.toDegrees(carto.longitude)
+
+          // Re-validate (also protects against accidental swapped coords in the GeoJSON).
+          if (!inMontpellier(treeLatDeg, treeLonDeg) && inMontpellier(treeLonDeg, treeLatDeg)) {
+            ;[treeLatDeg, treeLonDeg] = [treeLonDeg, treeLatDeg]
+          }
+          if (!inMontpellier(treeLatDeg, treeLonDeg)) {
+            treeLatDeg = 43.6119
+            treeLonDeg = 3.8730
+            setStatus('Ion GeoJSON coords invalid; falling back to Peyrou.')
+          } else {
+            setStatus('Tree location loaded from ion GeoJSON.')
+          }
+        }
+      } else {
+        setStatus('Ion GeoJSON loaded but no point position found; using env/default coordinates.')
+      }
+    } catch (e) {
+      setStatus(`Failed to load ion GeoJSON for tree location. Details: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   // Camera focus (defaults to the tree location)
@@ -440,14 +490,16 @@ async function init() {
   let treeModel: Model | null = null
   try {
     treeModel = await Model.fromGltfAsync({
-      url: treeUrl,
+      url: hasIonTree ? await IonResource.fromAssetId(env.ionTreeAssetId) : treeUrl,
       modelMatrix: treeModelMatrix,
       scale: 1.0,
     })
     viewer.scene.primitives.add(treeModel)
   } catch (e) {
     setStatus(
-      `Failed to load tree model at ${treeUrl}. Check that tree.glb exists in /public/models and is a valid GLB. Details: ${
+      `Failed to load tree model. ${
+        hasIonTree ? `Check VITE_ION_TREE_ASSET_ID (${env.ionTreeAssetId}).` : `Check that ${treeUrl} exists and is a valid GLB.`
+      } Details: ${
         e instanceof Error ? e.message : String(e)
       }`,
     )
