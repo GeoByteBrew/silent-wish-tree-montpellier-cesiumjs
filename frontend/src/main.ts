@@ -3,13 +3,10 @@ import {
   Cartesian3,
   Cartographic,
   Cesium3DTileset,
-  ConstantProperty,
-  GeoJsonDataSource,
   HeadingPitchRoll,
   Ion,
   IonImageryProvider,
   IonResource,
-  JulianDate,
   Math as CesiumMath,
   Matrix4,
   Model,
@@ -201,6 +198,101 @@ async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Pr
   return out.toDataURL('image/png')
 }
 
+// ---- Coordinate helpers (WGS84 + Lambert-93 EPSG:2154) ----
+// Many French open-data sets are in Lambert-93 meters. If GeoJSON coordinates look like (x ~ 700000, y ~ 6.2e6),
+// we convert them to WGS84 degrees.
+function lambert93ToWgs84(x: number, y: number): { lon: number; lat: number } {
+  // Constants for Lambert-93 (EPSG:2154)
+  const e = 0.0818191910428158
+  const n = 0.725607765053267
+  const C = 11754255.426096
+  const xs = 700000.0
+  const ys = 12655612.049876
+  const lon0 = 3.0 * Math.PI / 180.0 // central meridian
+
+  const dx = x - xs
+  const dy = ys - y
+  const R = Math.sqrt(dx * dx + dy * dy)
+  const gamma = Math.atan2(dx, dy)
+  const lon = lon0 + gamma / n
+  const latIso = -1 / n * Math.log(R / C)
+
+  // Iterative solve for latitude from isometric latitude
+  let lat = 2 * Math.atan(Math.exp(latIso)) - Math.PI / 2
+  for (let i = 0; i < 8; i++) {
+    const sinLat = Math.sin(lat)
+    const next =
+      2 *
+        Math.atan(
+          Math.pow((1 + e * sinLat) / (1 - e * sinLat), e / 2) * Math.exp(latIso),
+        ) -
+      Math.PI / 2
+    if (Math.abs(next - lat) < 1e-11) {
+      lat = next
+      break
+    }
+    lat = next
+  }
+
+  return { lon: (lon * 180) / Math.PI, lat: (lat * 180) / Math.PI }
+}
+
+function looksLikeLambert93(a: number, b: number): boolean {
+  // a,b are likely x,y in meters
+  return Math.abs(a) > 1000 && Math.abs(b) > 1000 && Math.abs(a) < 2e7 && Math.abs(b) < 2e7
+}
+
+function normalizeLonLat(a: number, b: number): { lon: number; lat: number; note?: string } {
+  // If it already looks like lon/lat degrees:
+  if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return { lon: a, lat: b }
+  // If swapped:
+  if (Math.abs(b) <= 180 && Math.abs(a) <= 90) return { lon: b, lat: a, note: 'swapped' }
+  // Lambert-93 meters (x,y)
+  if (looksLikeLambert93(a, b)) {
+    const { lon, lat } = lambert93ToWgs84(a, b)
+    return { lon, lat, note: 'lambert93' }
+  }
+  return { lon: a, lat: b, note: 'unknown' }
+}
+
+async function fetchIonGeoJson(assetId: number): Promise<any> {
+  const res = await IonResource.fromAssetId(assetId)
+  const r = await fetch(res as unknown as RequestInfo)
+  if (!r.ok) throw new Error(`GeoJSON HTTP ${r.status}`)
+  return await r.json()
+}
+
+function extractLonLatPointsFromGeoJson(geo: any): Array<{ lon: number; lat: number; note?: string }> {
+  const pts: Array<{ lon: number; lat: number; note?: string }> = []
+  if (!geo) return pts
+
+  const addCoord = (coord: any) => {
+    if (!Array.isArray(coord) || coord.length < 2) return
+    const a = Number(coord[0])
+    const b = Number(coord[1])
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return
+    pts.push(normalizeLonLat(a, b))
+  }
+
+  const walkGeom = (geom: any) => {
+    if (!geom) return
+    if (geom.type === 'Point') addCoord(geom.coordinates)
+    else if (geom.type === 'MultiPoint') {
+      for (const c of geom.coordinates ?? []) addCoord(c)
+    }
+  }
+
+  if (geo.type === 'FeatureCollection') {
+    for (const f of geo.features ?? []) walkGeom(f?.geometry)
+  } else if (geo.type === 'Feature') {
+    walkGeom(geo.geometry)
+  } else {
+    walkGeom(geo)
+  }
+
+  return pts
+}
+
 async function init() {
   let lang: Lang = (localStorage.getItem('lang') as Lang) || 'fr'
   let selectedOrnament: OrnamentId = 'star'
@@ -271,7 +363,7 @@ async function init() {
 
         <div class="footer muted">
           No account · No email · Individual wishes are never displayed
-        </div>
+    </div>
       </aside>
   </div>
 `
@@ -501,38 +593,23 @@ async function init() {
   // This is great to avoid manual lat/lon and keep placement centralized in ion.
   if (hasIonTreeGeojson) {
     try {
-      const ds = await GeoJsonDataSource.load(await IonResource.fromAssetId(env.ionTreeGeojsonAssetId))
-      viewer.dataSources.add(ds)
-      // Hide billboards/labels if any; we only need the coordinate.
-      for (const e of ds.entities.values) {
-        if (e.billboard) e.billboard.show = new ConstantProperty(false)
-        if (e.label) e.label.show = new ConstantProperty(false)
-        if (e.point) e.point.show = new ConstantProperty(false)
-      }
-      const now = JulianDate.now()
-      const firstWithPos = ds.entities.values.find((e) => e.position?.getValue(now))
-      const p = firstWithPos?.position?.getValue(now)
-      if (p) {
-        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(p)
-        if (carto) {
-          treeLatDeg = CesiumMath.toDegrees(carto.latitude)
-          treeLonDeg = CesiumMath.toDegrees(carto.longitude)
-
-          // Re-validate (also protects against accidental swapped coords in the GeoJSON).
-          if (!inMontpellier(treeLatDeg, treeLonDeg) && inMontpellier(treeLonDeg, treeLatDeg)) {
-            ;[treeLatDeg, treeLonDeg] = [treeLonDeg, treeLatDeg]
-          }
-          if (!inMontpellier(treeLatDeg, treeLonDeg)) {
-            treeLatDeg = 43.6119
-            treeLonDeg = 3.8730
-            setStatus('Ion GeoJSON coords invalid; falling back to Peyrou.')
-          } else {
-            setStatus('Tree location loaded from ion GeoJSON.')
-          }
+      const geo = await fetchIonGeoJson(env.ionTreeGeojsonAssetId)
+      const pts = extractLonLatPointsFromGeoJson(geo)
+      const first = pts[0]
+      if (first) {
+        treeLonDeg = first.lon
+        treeLatDeg = first.lat
+        if (!inMontpellier(treeLatDeg, treeLonDeg) && inMontpellier(treeLonDeg, treeLatDeg)) {
+          ;[treeLatDeg, treeLonDeg] = [treeLonDeg, treeLatDeg]
         }
-      } else {
-        setStatus('Ion GeoJSON loaded but no point position found; using env/default coordinates.')
-      }
+        if (!inMontpellier(treeLatDeg, treeLonDeg)) {
+          treeLatDeg = 43.6119
+          treeLonDeg = 3.8730
+          setStatus('Ion GeoJSON coords invalid; falling back to Peyrou.')
+        } else {
+          setStatus(`Tree location loaded from ion GeoJSON${first.note ? ` (${first.note})` : ''}.`)
+        }
+      } else setStatus('Ion GeoJSON loaded but no Point found; using env/default coordinates.')
     } catch (e) {
       setStatus(`Failed to load ion GeoJSON for tree location. Details: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -626,33 +703,9 @@ async function init() {
   const hasExtraTreesGeo = Number.isFinite(env.ionExtraTreesGeojsonAssetId) && env.ionExtraTreesGeojsonAssetId > 0
   if (hasExtraTrees && hasExtraTreesGeo) {
     try {
-      const ds = await GeoJsonDataSource.load(await IonResource.fromAssetId(env.ionExtraTreesGeojsonAssetId))
-      viewer.dataSources.add(ds)
-      // Hide GeoJSON visuals.
-      for (const e of ds.entities.values) {
-        if (e.billboard) e.billboard.show = new ConstantProperty(false)
-        if (e.label) e.label.show = new ConstantProperty(false)
-        if (e.point) e.point.show = new ConstantProperty(false)
-      }
-
-      const now = JulianDate.now()
-      const pts: Array<{ lon: number; lat: number }> = []
-      for (const e of ds.entities.values) {
-        const p = e.position?.getValue(now)
-        if (!p) continue
-        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(p)
-        if (!carto) continue
-        let lon = CesiumMath.toDegrees(carto.longitude)
-        let lat = CesiumMath.toDegrees(carto.latitude)
-
-        // Auto-fix swapped lon/lat if the GeoJSON was exported with axis order reversed.
-        const inMontpellier = (la: number, lo: number) => la >= 43 && la <= 44 && lo >= 3 && lo <= 4
-        if (!inMontpellier(lat, lon) && inMontpellier(lon, lat)) {
-          ;[lat, lon] = [lon, lat]
-        }
-
-        pts.push({ lon, lat })
-      }
+      const geo = await fetchIonGeoJson(env.ionExtraTreesGeojsonAssetId)
+      const ptsRaw = extractLonLatPointsFromGeoJson(geo)
+      const pts: Array<{ lon: number; lat: number }> = ptsRaw.map((p) => ({ lon: p.lon, lat: p.lat }))
 
       const limit = Number.isFinite(env.extraTreesLimit) ? Math.max(1, Math.min(500, env.extraTreesLimit)) : 80
       const usePts = pts.slice(0, limit)
