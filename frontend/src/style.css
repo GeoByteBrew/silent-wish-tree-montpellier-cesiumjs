@@ -220,6 +220,7 @@ button:disabled {
 .status {
   min-height: 18px;
   font-size: 13px;
+  white-space: pre-line;
 }
 
 .footer {

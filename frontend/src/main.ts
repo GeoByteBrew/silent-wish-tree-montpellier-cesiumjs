@@ -380,8 +380,18 @@ async function init() {
 
   const t = (k: string) => I18N[lang][k] ?? k
   const status = $('#status') as HTMLDivElement
+  const statusLines: string[] = []
   const setStatus = (msg: string) => {
-    status.textContent = msg
+    const m = msg.trim()
+    if (!m) {
+      statusLines.length = 0
+      status.textContent = ''
+      return
+    }
+    // Keep last ~6 lines so debug messages don't get overwritten by later status updates.
+    statusLines.push(m)
+    while (statusLines.length > 6) statusLines.shift()
+    status.textContent = statusLines.join('\n')
   }
 
   const renderTexts = () => {
