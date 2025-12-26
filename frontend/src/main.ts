@@ -457,6 +457,13 @@ async function init() {
     ;[treeLatDeg, treeLonDeg] = [treeLonDeg, treeLatDeg]
     setStatus('Tree coordinates looked swapped; auto-corrected (lat/lon).')
   }
+
+  // If still invalid, place the tree at the camera center (Peyrou) by default.
+  if (!inMontpellier(treeLatDeg, treeLonDeg)) {
+    treeLatDeg = camLatDeg
+    treeLonDeg = camLonDeg
+    setStatus('Tree coordinates invalid; placing tree at camera center (Peyrou).')
+  }
   // Cesium height is meters above the ellipsoid. Start a bit above ground to ensure visibility, then tune.
   const treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
   const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 1.0
