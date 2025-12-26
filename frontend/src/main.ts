@@ -69,6 +69,11 @@ const env = {
   apiBase: (import.meta.env.VITE_API_BASE as string | undefined)?.trim(), // optional override
   revealDateIso: (import.meta.env.VITE_REVEAL_AT_ISO as string | undefined)?.trim() ?? '2026-01-06T00:00:00+01:00',
   demoKey: (import.meta.env.VITE_DEMO_KEY as string | undefined)?.trim(), // used only for local testing
+  treeLat: Number((import.meta.env.VITE_TREE_LAT as string | undefined)?.trim() ?? ''),
+  treeLon: Number((import.meta.env.VITE_TREE_LON as string | undefined)?.trim() ?? ''),
+  treeHeight: Number((import.meta.env.VITE_TREE_HEIGHT as string | undefined)?.trim() ?? ''),
+  treeScale: Number((import.meta.env.VITE_TREE_SCALE as string | undefined)?.trim() ?? ''),
+  treeHeadingDeg: Number((import.meta.env.VITE_TREE_HEADING_DEG as string | undefined)?.trim() ?? ''),
 }
 
 const ORNAMENTS = [
@@ -368,15 +373,23 @@ async function init() {
 
   // Tree (placeholder: you will drop models into /public/models/)
   const treeUrl = '/models/tree.glb'
-  const treePosition = Cartesian3.fromDegrees(3.876716, 43.610769, 25) // Montpellier center-ish (adjust later)
-  const treeHeading = CesiumMath.toRadians(0)
+  // Default: L’Écusson, 34000 Montpellier
+  const treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136
+  const treeLonDeg = Number.isFinite(env.treeLon) ? env.treeLon : 3.869571
+  // Cesium height is meters above the ellipsoid. Start a bit above ground to ensure visibility, then tune.
+  const treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
+  const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 1.0
+  const headingDeg = Number.isFinite(env.treeHeadingDeg) ? env.treeHeadingDeg : 0
+
+  const treePosition = Cartesian3.fromDegrees(treeLonDeg, treeLatDeg, treeAltM)
+  const treeHeading = CesiumMath.toRadians(headingDeg)
   const treePitch = 0
   const treeRoll = 0
   const treeHPR = Transforms.headingPitchRollQuaternion(treePosition, new HeadingPitchRoll(treeHeading, treePitch, treeRoll))
   const treeModelMatrix = Matrix4.fromTranslationQuaternionRotationScale(
     treePosition,
     treeHPR,
-    new Cartesian3(1, 1, 1),
+    new Cartesian3(treeScale, treeScale, treeScale),
     new Matrix4(),
   )
 
@@ -395,14 +408,14 @@ async function init() {
   // Camera presets
   const flyToCity = async () => {
     await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(3.876716, 43.610769, 850),
+      destination: Cartesian3.fromDegrees(treeLonDeg, treeLatDeg, 850),
       orientation: { heading: 0, pitch: CesiumMath.toRadians(-35), roll: 0 },
       duration: 1.2,
     })
   }
   const flyToTree = async () => {
     await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(3.876716, 43.610769, 90),
+      destination: Cartesian3.fromDegrees(treeLonDeg, treeLatDeg, 90),
       orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
       duration: 1.0,
     })
