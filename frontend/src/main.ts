@@ -466,7 +466,7 @@ async function init() {
   }
   // Cesium height is meters above the ellipsoid. Start a bit above ground to ensure visibility, then tune.
   const treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
-  const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 1.0
+  const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 2.0
   const headingDeg = Number.isFinite(env.treeHeadingDeg) ? env.treeHeadingDeg : 0
 
   const treePosition = Cartesian3.fromDegrees(treeLonDeg, treeLatDeg, treeAltM)
@@ -489,8 +489,12 @@ async function init() {
       scale: 1.0,
     })
     viewer.scene.primitives.add(treeModel)
-  } catch {
-    // ok for now; user will provide glb
+  } catch (e) {
+    setStatus(
+      `Failed to load tree model at ${treeUrl}. Check that tree.glb exists in /public/models and is a valid GLB. Details: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    )
   }
 
   // Camera presets
