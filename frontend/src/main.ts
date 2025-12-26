@@ -1,6 +1,7 @@
 import './style.css'
 import {
   Cartesian3,
+  Cartographic,
   Cesium3DTileset,
   ConstantProperty,
   GeoJsonDataSource,
@@ -76,6 +77,8 @@ const env = {
   treeLat: Number((import.meta.env.VITE_TREE_LAT as string | undefined)?.trim() ?? ''),
   treeLon: Number((import.meta.env.VITE_TREE_LON as string | undefined)?.trim() ?? ''),
   treeHeight: Number((import.meta.env.VITE_TREE_HEIGHT as string | undefined)?.trim() ?? ''),
+  treeGroundOffsetM: Number((import.meta.env.VITE_TREE_GROUND_OFFSET_M as string | undefined)?.trim() ?? ''),
+  treeGroundSampleRadiusM: Number((import.meta.env.VITE_TREE_GROUND_SAMPLE_RADIUS_M as string | undefined)?.trim() ?? ''),
   treeScale: Number((import.meta.env.VITE_TREE_SCALE as string | undefined)?.trim() ?? ''),
   treeHeadingDeg: Number((import.meta.env.VITE_TREE_HEADING_DEG as string | undefined)?.trim() ?? ''),
   ionTreeAssetId: Number((import.meta.env.VITE_ION_TREE_ASSET_ID as string | undefined)?.trim() ?? ''),
@@ -380,6 +383,38 @@ async function init() {
     }
   }
 
+  // Helper: sample "ground" height from rendered photorealistic 3D tiles.
+  // In cities you can have stacked surfaces (roof/terrace/ground). We sample a small grid and take the MIN height
+  // to bias toward the ground.
+  async function sampleGroundHeightMinMeters(lonDeg: number, latDeg: number, radiusM: number): Promise<number | null> {
+    const center = Cartesian3.fromDegrees(lonDeg, latDeg, 0)
+    const enu = Transforms.eastNorthUpToFixedFrame(center)
+    const offsets = [-radiusM, 0, radiusM]
+    const cartos: Cartographic[] = []
+
+    for (const e of offsets) {
+      for (const n of offsets) {
+        const p = Matrix4.multiplyByPoint(enu, new Cartesian3(e, n, 0), new Cartesian3())
+        const c = viewer.scene.globe.ellipsoid.cartesianToCartographic(p)
+        if (c) {
+          c.height = 0
+          cartos.push(c)
+        }
+      }
+    }
+
+    try {
+      const updated = await viewer.scene.sampleHeightMostDetailed(cartos)
+      const heights = updated
+        .map((c) => c?.height)
+        .filter((h): h is number => typeof h === 'number' && Number.isFinite(h))
+      if (!heights.length) return null
+      return Math.min(...heights)
+    } catch {
+      return null
+    }
+  }
+
   // Tree (placeholder: you will drop models into /public/models/)
   const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
   const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
@@ -470,8 +505,31 @@ async function init() {
   controller.enableTilt = true
   controller.enableZoom = true
   controller.enableTranslate = true
-  // Cesium height is meters above the ellipsoid. Start a bit above ground to ensure visibility, then tune.
-  const treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
+
+  // Tree height:
+  // - If photorealistic 3D tiles are enabled, compute the ground height at (lon,lat) and add a small offset.
+  // - Otherwise, fall back to the legacy "absolute height above ellipsoid" behavior.
+  const groundOffsetM = Number.isFinite(env.treeGroundOffsetM)
+    ? env.treeGroundOffsetM
+    : Number.isFinite(env.treeHeight)
+      ? env.treeHeight // fallback: treat VITE_TREE_HEIGHT as offset if the new var isn't provided
+      : 1.5
+  const sampleRadiusM = Number.isFinite(env.treeGroundSampleRadiusM) ? env.treeGroundSampleRadiusM : 6
+
+  let treeAltM: number
+  if (has3DTiles) {
+    const ground = await sampleGroundHeightMinMeters(treeLonDeg, treeLatDeg, sampleRadiusM)
+    if (ground != null) {
+      treeAltM = ground + groundOffsetM
+      setStatus(`Tree grounded (min height) +${groundOffsetM.toFixed(2)}m offset.`)
+    } else {
+      treeAltM = 25
+      setStatus('Failed to sample ground height; using fallback altitude 25m.')
+    }
+  } else {
+    treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
+  }
+
   const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 2.0
   const headingDeg = Number.isFinite(env.treeHeadingDeg) ? env.treeHeadingDeg : 0
 
