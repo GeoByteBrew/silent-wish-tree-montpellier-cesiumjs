@@ -374,8 +374,16 @@ async function init() {
   // Tree (placeholder: you will drop models into /public/models/)
   const treeUrl = '/models/tree.glb'
   // Default: L’Écusson, 34000 Montpellier
-  const treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136
-  const treeLonDeg = Number.isFinite(env.treeLon) ? env.treeLon : 3.869571
+  let treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136111111111 // 43°36'40.9"N
+  let treeLonDeg = Number.isFinite(env.treeLon) ? env.treeLon : 3.8695555555555557 // 3°52'10.4"E
+
+  // If the user accidentally swapped lat/lon in env vars, auto-fix using a Montpellier bounding box heuristic.
+  // Correct: lat ≈ 43-44, lon ≈ 3-4. Swapped commonly becomes lat ≈ 3-4, lon ≈ 43-44 (ocean).
+  const inMontpellier = (lat: number, lon: number) => lat >= 43 && lat <= 44 && lon >= 3 && lon <= 4
+  if (!inMontpellier(treeLatDeg, treeLonDeg) && inMontpellier(treeLonDeg, treeLatDeg)) {
+    ;[treeLatDeg, treeLonDeg] = [treeLonDeg, treeLatDeg]
+    setStatus('Tree coordinates looked swapped; auto-corrected (lat/lon).')
+  }
   // Cesium height is meters above the ellipsoid. Start a bit above ground to ensure visibility, then tune.
   const treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
   const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 1.0
