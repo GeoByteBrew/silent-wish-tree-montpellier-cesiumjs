@@ -293,6 +293,16 @@ function extractLonLatPointsFromGeoJson(geo: any): Array<{ lon: number; lat: num
   return pts
 }
 
+function summarizePointNotes(pts: Array<{ lon: number; lat: number; note?: string }>): string {
+  const counts = new Map<string, number>()
+  for (const p of pts) {
+    const k = p.note ?? 'wgs84'
+    counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  const parts = Array.from(counts.entries()).map(([k, v]) => `${k}:${v}`)
+  return parts.join(', ')
+}
+
 async function init() {
   let lang: Lang = (localStorage.getItem('lang') as Lang) || 'fr'
   let selectedOrnament: OrnamentId = 'star'
@@ -706,6 +716,16 @@ async function init() {
       const geo = await fetchIonGeoJson(env.ionExtraTreesGeojsonAssetId)
       const ptsRaw = extractLonLatPointsFromGeoJson(geo)
       const pts: Array<{ lon: number; lat: number }> = ptsRaw.map((p) => ({ lon: p.lon, lat: p.lat }))
+      if (ptsRaw.length) {
+        const first = ptsRaw[0]
+        setStatus(
+          `Extra trees GeoJSON parsed: ${ptsRaw.length} points (${summarizePointNotes(ptsRaw)}). First: lon=${first.lon.toFixed(
+            6,
+          )}, lat=${first.lat.toFixed(6)}${first.note ? ` (${first.note})` : ''}`,
+        )
+      } else {
+        setStatus('Extra trees GeoJSON parsed: 0 points found.')
+      }
 
       const limit = Number.isFinite(env.extraTreesLimit) ? Math.max(1, Math.min(500, env.extraTreesLimit)) : 80
       const usePts = pts.slice(0, limit)
