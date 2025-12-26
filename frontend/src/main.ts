@@ -375,10 +375,31 @@ async function init() {
     }
   }
 
-  // Camera focus + movement clamp (Peyrou area)
-  // Defaults roughly point to Promenade du Peyrou; override via Vercel env vars if needed.
-  let camLatDeg = Number.isFinite(env.cameraLat) ? env.cameraLat : 43.6119
-  let camLonDeg = Number.isFinite(env.cameraLon) ? env.cameraLon : 3.8730
+  // Tree (placeholder: you will drop models into /public/models/)
+  const treeUrl = '/models/tree.glb'
+  // Default: L’Écusson, 34000 Montpellier
+  let treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136111111111 // 43°36'40.9"N
+  let treeLonDeg = Number.isFinite(env.treeLon) ? env.treeLon : 3.8695555555555557 // 3°52'10.4"E
+
+  // If the user accidentally swapped lat/lon in env vars, auto-fix using a Montpellier bounding box heuristic.
+  // Correct: lat ≈ 43-44, lon ≈ 3-4. Swapped commonly becomes lat ≈ 3-4, lon ≈ 43-44 (ocean).
+  const inMontpellier = (lat: number, lon: number) => lat >= 43 && lat <= 44 && lon >= 3 && lon <= 4
+  if (!inMontpellier(treeLatDeg, treeLonDeg) && inMontpellier(treeLonDeg, treeLatDeg)) {
+    ;[treeLatDeg, treeLonDeg] = [treeLonDeg, treeLatDeg]
+    setStatus('Tree coordinates looked swapped; auto-corrected (lat/lon).')
+  }
+
+  // If still invalid, place the tree at Peyrou by default.
+  if (!inMontpellier(treeLatDeg, treeLonDeg)) {
+    treeLatDeg = 43.6119
+    treeLonDeg = 3.8730
+    setStatus('Tree coordinates invalid; placing tree at Peyrou defaults.')
+  }
+
+  // Camera focus + movement clamp (defaults to the tree location)
+  // You can override via Vercel env vars if needed.
+  let camLatDeg = Number.isFinite(env.cameraLat) ? env.cameraLat : treeLatDeg
+  let camLonDeg = Number.isFinite(env.cameraLon) ? env.cameraLon : treeLonDeg
   const camRadiusM = Number.isFinite(env.cameraRadiusM) ? env.cameraRadiusM : 100
 
   // Auto-fix swapped camera coords (common mistake in env vars).
@@ -388,12 +409,13 @@ async function init() {
     setStatus('Camera coordinates looked swapped; auto-corrected (lat/lon).')
   }
 
-  // If still invalid, force Peyrou defaults to avoid flying to the ocean.
+  // If still invalid, fall back to the tree location.
   if (!inMontpellierCam(camLatDeg, camLonDeg)) {
-    camLatDeg = 43.6119
-    camLonDeg = 3.8730
-    setStatus('Camera coordinates invalid; falling back to Peyrou defaults.')
+    camLatDeg = treeLatDeg
+    camLonDeg = treeLonDeg
+    setStatus('Camera coordinates invalid; falling back to tree location.')
   }
+
   const camCenter = Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0)
   const enuToFixed = Transforms.eastNorthUpToFixedFrame(camCenter)
   const fixedToEnu = Matrix4.inverse(enuToFixed, new Matrix4())
@@ -443,27 +465,6 @@ async function init() {
 
   // Clamp after any camera change.
   viewer.camera.changed.addEventListener(clampCameraToRadius)
-
-  // Tree (placeholder: you will drop models into /public/models/)
-  const treeUrl = '/models/tree.glb'
-  // Default: L’Écusson, 34000 Montpellier
-  let treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136111111111 // 43°36'40.9"N
-  let treeLonDeg = Number.isFinite(env.treeLon) ? env.treeLon : 3.8695555555555557 // 3°52'10.4"E
-
-  // If the user accidentally swapped lat/lon in env vars, auto-fix using a Montpellier bounding box heuristic.
-  // Correct: lat ≈ 43-44, lon ≈ 3-4. Swapped commonly becomes lat ≈ 3-4, lon ≈ 43-44 (ocean).
-  const inMontpellier = (lat: number, lon: number) => lat >= 43 && lat <= 44 && lon >= 3 && lon <= 4
-  if (!inMontpellier(treeLatDeg, treeLonDeg) && inMontpellier(treeLonDeg, treeLatDeg)) {
-    ;[treeLatDeg, treeLonDeg] = [treeLonDeg, treeLatDeg]
-    setStatus('Tree coordinates looked swapped; auto-corrected (lat/lon).')
-  }
-
-  // If still invalid, place the tree at the camera center (Peyrou) by default.
-  if (!inMontpellier(treeLatDeg, treeLonDeg)) {
-    treeLatDeg = camLatDeg
-    treeLonDeg = camLonDeg
-    setStatus('Tree coordinates invalid; placing tree at camera center (Peyrou).')
-  }
   // Cesium height is meters above the ellipsoid. Start a bit above ground to ensure visibility, then tune.
   const treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
   const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 2.0
@@ -516,7 +517,7 @@ async function init() {
   }
   ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
   ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToTree()
-  void flyToCity()
+  void flyToTree()
 
   // Local ornament placement (simple "drop near tree" for MVP)
   const localOrnaments: Model[] = []
