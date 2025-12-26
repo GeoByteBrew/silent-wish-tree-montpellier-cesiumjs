@@ -763,6 +763,7 @@ async function init() {
       const radius = Number.isFinite(env.extraTreesSampleRadiusM) ? env.extraTreesSampleRadiusM : 4
       // Allow tuning without redeploy:
       // - URL params: ?extraEast=-3&extraNorth=2 (meters)
+      // - URL params: ?extraScale=0.6
       // - localStorage: silentwish_extraEastM / silentwish_extraNorthM
       const baseOffEast = Number.isFinite(env.extraTreesOffsetEastM) ? env.extraTreesOffsetEastM : 0
       const baseOffNorth = Number.isFinite(env.extraTreesOffsetNorthM) ? env.extraTreesOffsetNorthM : 0
@@ -770,6 +771,8 @@ async function init() {
         getNumberParam('extraEast') ?? getStoredNumber('silentwish_extraEastM') ?? baseOffEast
       let offNorth =
         getNumberParam('extraNorth') ?? getStoredNumber('silentwish_extraNorthM') ?? baseOffNorth
+      let extraScale =
+        getNumberParam('extraScale') ?? getStoredNumber('silentwish_extraScale') ?? scale
 
       // Apply optional ENU offset in meters before sampling heights (fixes systematic drift from reprojection).
       const computeShiftedPts = (eM: number, nM: number) => {
@@ -791,14 +794,14 @@ async function init() {
 
       const shiftedPtsInitial = computeShiftedPts(offEast, offNorth)
 
-      // Sample ground ONCE for initial placement (small offset changes won't need re-sampling).
-      const heights =
+      // Sample ground initially. If offsets change, we will re-sample (debounced) to keep trees on the surface.
+      let heights =
         has3DTiles ? await sampleGroundHeightMinForPoints(shiftedPtsInitial, radius) : new Array(shiftedPtsInitial.length).fill(0)
 
       const url = await IonResource.fromAssetId(env.ionExtraTreesModelAssetId)
       const extraTreeEntities: string[] = []
 
-      const renderExtraTrees = (eM: number, nM: number) => {
+      const renderExtraTrees = async (eM: number, nM: number, opts: { resample: boolean }) => {
         // Remove previous
         for (const id of extraTreeEntities) {
           const ent = viewer.entities.getById(id)
@@ -807,6 +810,9 @@ async function init() {
         extraTreeEntities.length = 0
 
         const shiftedPts = computeShiftedPts(eM, nM)
+        if (has3DTiles && opts.resample) {
+          heights = await sampleGroundHeightMinForPoints(shiftedPts, radius)
+        }
         for (let i = 0; i < shiftedPts.length; i++) {
           const { lon, lat } = shiftedPts[i]
           const h = heights[i]
@@ -818,7 +824,7 @@ async function init() {
             position: pos,
             model: {
               uri: url,
-              scale,
+              scale: extraScale,
               minimumPixelSize: 24,
             },
           })
@@ -826,23 +832,60 @@ async function init() {
         }
         setStoredNumber('silentwish_extraEastM', eM)
         setStoredNumber('silentwish_extraNorthM', nM)
-        setStatus(`Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m`)
+        setStoredNumber('silentwish_extraScale', extraScale)
+        setStatus(
+          `Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m scale=${extraScale.toFixed(
+            2,
+          )}${opts.resample ? ' (resampled)' : ''}`,
+        )
       }
 
-      renderExtraTrees(offEast, offNorth)
+      await renderExtraTrees(offEast, offNorth, { resample: true })
 
       // Keyboard tuning: arrows move the whole set.
       // - arrows: 1m
       // - shift+arrows: 5m
       // - alt+arrows: 0.2m
+      // - g: force resample ground at current offset
+      // - - / = : scale down / up (shift = bigger step)
+      let resampleTimer: number | null = null
+      const scheduleResample = () => {
+        if (!has3DTiles) return
+        if (resampleTimer != null) window.clearTimeout(resampleTimer)
+        resampleTimer = window.setTimeout(() => {
+          void renderExtraTrees(offEast, offNorth, { resample: true })
+        }, 250)
+      }
+
       window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'g' || ev.key === 'G') {
+          void renderExtraTrees(offEast, offNorth, { resample: true })
+          ev.preventDefault()
+          return
+        }
+
+        // Scale tuning
+        if (ev.key === '-' || ev.key === '_') {
+          extraScale = Math.max(0.05, extraScale - (ev.shiftKey ? 0.1 : 0.05))
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+        if (ev.key === '=' || ev.key === '+') {
+          extraScale = Math.min(10, extraScale + (ev.shiftKey ? 0.1 : 0.05))
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+
         if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) return
         const step = ev.shiftKey ? 5 : ev.altKey ? 0.2 : 1
         if (ev.key === 'ArrowLeft') offEast -= step
         if (ev.key === 'ArrowRight') offEast += step
         if (ev.key === 'ArrowUp') offNorth += step
         if (ev.key === 'ArrowDown') offNorth -= step
-        renderExtraTrees(offEast, offNorth)
+        void renderExtraTrees(offEast, offNorth, { resample: false })
+        scheduleResample()
         ev.preventDefault()
       })
     } catch (e) {
