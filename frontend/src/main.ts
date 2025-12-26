@@ -797,22 +797,31 @@ async function init() {
       // Per-tree scale multipliers (unitless). Keyed by tree index. Effective scale = extraScale * multiplier.
       const perTreeScaleKey = 'silentwish_extraTreeScale'
       const perTreeScaleMult: Record<string, number> = getStoredJson(perTreeScaleKey, {})
+      // Per-tree XY (ENU) offsets in meters. Keyed by tree index.
+      const perTreeXYKey = 'silentwish_extraTreeXY'
+      const perTreeXY: Record<string, { e: number; n: number }> = getStoredJson(perTreeXYKey, {})
       let selectedTreeIdx: number | null = null
 
-      // Apply optional ENU offset in meters before sampling heights (fixes systematic drift from reprojection).
-      const computeShiftedPts = (eM: number, nM: number) => {
+      // Apply optional ENU offset in meters before sampling heights (fixes systematic drift).
+      // Also applies per-tree ENU offsets (for manual fine-tuning).
+      const shiftLonLatByEnu = (lon: number, lat: number, eM: number, nM: number) => {
+        if (eM === 0 && nM === 0) return { lon, lat }
+        const base = Cartesian3.fromDegrees(lon, lat, 0)
+        const enu = Transforms.eastNorthUpToFixedFrame(base)
+        const shifted = Matrix4.multiplyByPoint(enu, new Cartesian3(eM, nM, 0), new Cartesian3())
+        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(shifted)
+        if (!carto) return { lon, lat }
+        return { lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) }
+      }
+
+      const computeShiftedPts = (globalE: number, globalN: number) => {
         const out: Array<{ lon: number; lat: number }> = []
-        for (const { lon, lat } of usePts) {
-          if (eM === 0 && nM === 0) {
-            out.push({ lon, lat })
-            continue
-          }
-          const base = Cartesian3.fromDegrees(lon, lat, 0)
-          const enu = Transforms.eastNorthUpToFixedFrame(base)
-          const shifted = Matrix4.multiplyByPoint(enu, new Cartesian3(eM, nM, 0), new Cartesian3())
-          const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(shifted)
-          if (carto) out.push({ lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) })
-          else out.push({ lon, lat })
+        for (let i = 0; i < usePts.length; i++) {
+          const { lon, lat } = usePts[i]
+          const local = perTreeXY[String(i)] ?? { e: 0, n: 0 }
+          const totalE = globalE + (Number.isFinite(local.e) ? local.e : 0)
+          const totalN = globalN + (Number.isFinite(local.n) ? local.n : 0)
+          out.push(shiftLonLatByEnu(lon, lat, totalE, totalN))
         }
         return out
       }
@@ -877,6 +886,7 @@ async function init() {
         setStoredNumber('silentwish_extraGroundM', extraGround)
         setStoredJson(perTreeKey, perTreeDeltas)
         setStoredJson(perTreeScaleKey, perTreeScaleMult)
+        setStoredJson(perTreeXYKey, perTreeXY)
         setStatus(
           `Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m scale=${extraScale.toFixed(
             2,
@@ -884,7 +894,9 @@ async function init() {
             selectedTreeIdx != null
               ? ` · selected #${selectedTreeIdx} Δz=${(perTreeDeltas[String(selectedTreeIdx)] ?? 0).toFixed(2)}m ×s=${(
                   perTreeScaleMult[String(selectedTreeIdx)] ?? 1
-                ).toFixed(2)}`
+                ).toFixed(2)} Δe=${(perTreeXY[String(selectedTreeIdx)]?.e ?? 0).toFixed(1)} Δn=${(
+                  perTreeXY[String(selectedTreeIdx)]?.n ?? 0
+                ).toFixed(1)}`
               : ''
           }`,
         )
@@ -918,12 +930,32 @@ async function init() {
       // - - / = : scale down / up (shift = bigger step)
       // - [ / ] : ground offset down/up (shift = bigger step)
       // - , / . : per-tree scale down/up when a tree is selected (shift = bigger step)
+      // - I/J/K/L : move selected tree North/West/South/East (shift = bigger step, alt = smaller step)
       let resampleTimer: number | null = null
       const scheduleResample = () => {
         if (!has3DTiles) return
         if (resampleTimer != null) window.clearTimeout(resampleTimer)
         resampleTimer = window.setTimeout(() => {
           void renderExtraTrees(offEast, offNorth, { resample: true })
+        }, 250)
+      }
+
+      let selectedResampleTimer: number | null = null
+      const scheduleSelectedResample = () => {
+        if (!has3DTiles) return
+        if (selectedTreeIdx == null) return
+        const idx = selectedTreeIdx
+        if (selectedResampleTimer != null) window.clearTimeout(selectedResampleTimer)
+        selectedResampleTimer = window.setTimeout(async () => {
+          // Re-sample ONLY the selected tree ground height after XY move.
+          const k = String(idx)
+          const local = perTreeXY[k] ?? { e: 0, n: 0 }
+          const p0 = usePts[idx]
+          if (!p0) return
+          const shifted = shiftLonLatByEnu(p0.lon, p0.lat, offEast + (local.e ?? 0), offNorth + (local.n ?? 0))
+          const h = await sampleGroundHeightMinForPoints([shifted], radius)
+          if (h?.length) heights[idx] = h[0]
+          void renderExtraTrees(offEast, offNorth, { resample: false })
         }, 250)
       }
 
@@ -1003,6 +1035,22 @@ async function init() {
             extraGround += step
           }
           void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+
+        // Per-tree XY tuning (selected only)
+        if (selectedTreeIdx != null && ['i', 'j', 'k', 'l', 'I', 'J', 'K', 'L'].includes(ev.key)) {
+          const step = ev.shiftKey ? 5 : ev.altKey ? 0.2 : 1
+          const k = String(selectedTreeIdx)
+          const cur = perTreeXY[k] ?? { e: 0, n: 0 }
+          if (ev.key === 'j' || ev.key === 'J') cur.e -= step
+          if (ev.key === 'l' || ev.key === 'L') cur.e += step
+          if (ev.key === 'i' || ev.key === 'I') cur.n += step
+          if (ev.key === 'k' || ev.key === 'K') cur.n -= step
+          perTreeXY[k] = cur
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          scheduleSelectedResample()
           ev.preventDefault()
           return
         }
