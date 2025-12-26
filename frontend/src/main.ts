@@ -377,9 +377,23 @@ async function init() {
 
   // Camera focus + movement clamp (Peyrou area)
   // Defaults roughly point to Promenade du Peyrou; override via Vercel env vars if needed.
-  const camLatDeg = Number.isFinite(env.cameraLat) ? env.cameraLat : 43.6119
-  const camLonDeg = Number.isFinite(env.cameraLon) ? env.cameraLon : 3.8730
+  let camLatDeg = Number.isFinite(env.cameraLat) ? env.cameraLat : 43.6119
+  let camLonDeg = Number.isFinite(env.cameraLon) ? env.cameraLon : 3.8730
   const camRadiusM = Number.isFinite(env.cameraRadiusM) ? env.cameraRadiusM : 100
+
+  // Auto-fix swapped camera coords (common mistake in env vars).
+  const inMontpellierCam = (lat: number, lon: number) => lat >= 43 && lat <= 44 && lon >= 3 && lon <= 4
+  if (!inMontpellierCam(camLatDeg, camLonDeg) && inMontpellierCam(camLonDeg, camLatDeg)) {
+    ;[camLatDeg, camLonDeg] = [camLonDeg, camLatDeg]
+    setStatus('Camera coordinates looked swapped; auto-corrected (lat/lon).')
+  }
+
+  // If still invalid, force Peyrou defaults to avoid flying to the ocean.
+  if (!inMontpellierCam(camLatDeg, camLonDeg)) {
+    camLatDeg = 43.6119
+    camLonDeg = 3.8730
+    setStatus('Camera coordinates invalid; falling back to Peyrou defaults.')
+  }
   const camCenter = Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0)
   const enuToFixed = Transforms.eastNorthUpToFixedFrame(camCenter)
   const fixedToEnu = Matrix4.inverse(enuToFixed, new Matrix4())
