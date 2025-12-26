@@ -826,6 +826,20 @@ async function init() {
       const url = await IonResource.fromAssetId(env.ionExtraTreesModelAssetId)
       const extraTreeEntities: string[] = []
 
+      // Estimate model "half height" for pivot compensation when scaling.
+      // Many models have pivot around center; scaling then visually shifts ground contact.
+      // We'll approximate using the bounding sphere radius.
+      let modelRadiusM: number | null = null
+      try {
+        const tmp = await Model.fromGltfAsync({ url, modelMatrix: Matrix4.IDENTITY, scale: 1.0 })
+        tmp.show = false
+        viewer.scene.primitives.add(tmp)
+        modelRadiusM = tmp.boundingSphere?.radius ?? null
+        viewer.scene.primitives.remove(tmp)
+      } catch {
+        modelRadiusM = null
+      }
+
       const renderExtraTrees = async (eM: number, nM: number, opts: { resample: boolean }) => {
         // Remove previous
         for (const id of extraTreeEntities) {
@@ -939,7 +953,14 @@ async function init() {
           const step = ev.shiftKey ? 0.1 : 0.05
           const k = String(selectedTreeIdx)
           const cur = perTreeScaleMult[k] ?? 1
-          perTreeScaleMult[k] = Math.max(0.1, cur - step)
+          const next = Math.max(0.1, cur - step)
+          perTreeScaleMult[k] = next
+          // Pivot compensation: adjust Δz so the base stays roughly in place when scaling.
+          // Hold Alt to disable compensation.
+          if (!ev.altKey && modelRadiusM != null) {
+            const dz = (perTreeDeltas[k] ?? 0) + (cur - next) * modelRadiusM
+            perTreeDeltas[k] = dz
+          }
           void renderExtraTrees(offEast, offNorth, { resample: false })
           ev.preventDefault()
           return
@@ -948,7 +969,13 @@ async function init() {
           const step = ev.shiftKey ? 0.1 : 0.05
           const k = String(selectedTreeIdx)
           const cur = perTreeScaleMult[k] ?? 1
-          perTreeScaleMult[k] = Math.min(5, cur + step)
+          const next = Math.min(5, cur + step)
+          perTreeScaleMult[k] = next
+          // Pivot compensation (Alt disables)
+          if (!ev.altKey && modelRadiusM != null) {
+            const dz = (perTreeDeltas[k] ?? 0) + (cur - next) * modelRadiusM
+            perTreeDeltas[k] = dz
+          }
           void renderExtraTrees(offEast, offNorth, { resample: false })
           ev.preventDefault()
           return
