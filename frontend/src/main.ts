@@ -303,6 +303,24 @@ function summarizePointNotes(pts: Array<{ lon: number; lat: number; note?: strin
   return parts.join(', ')
 }
 
+function getNumberParam(name: string): number | null {
+  const v = new URLSearchParams(window.location.search).get(name)
+  if (v == null || v.trim() === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function getStoredNumber(key: string): number | null {
+  const v = localStorage.getItem(key)
+  if (!v) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function setStoredNumber(key: string, n: number) {
+  localStorage.setItem(key, String(n))
+}
+
 async function init() {
   let lang: Lang = (localStorage.getItem('lang') as Lang) || 'fr'
   let selectedOrnament: OrnamentId = 'star'
@@ -743,43 +761,90 @@ async function init() {
       const scale = Number.isFinite(env.extraTreesScale) ? env.extraTreesScale : 1.2
       const offset = Number.isFinite(env.extraTreesGroundOffsetM) ? env.extraTreesGroundOffsetM : 0.8
       const radius = Number.isFinite(env.extraTreesSampleRadiusM) ? env.extraTreesSampleRadiusM : 4
-      const offEast = Number.isFinite(env.extraTreesOffsetEastM) ? env.extraTreesOffsetEastM : 0
-      const offNorth = Number.isFinite(env.extraTreesOffsetNorthM) ? env.extraTreesOffsetNorthM : 0
+      // Allow tuning without redeploy:
+      // - URL params: ?extraEast=-3&extraNorth=2 (meters)
+      // - localStorage: silentwish_extraEastM / silentwish_extraNorthM
+      const baseOffEast = Number.isFinite(env.extraTreesOffsetEastM) ? env.extraTreesOffsetEastM : 0
+      const baseOffNorth = Number.isFinite(env.extraTreesOffsetNorthM) ? env.extraTreesOffsetNorthM : 0
+      let offEast =
+        getNumberParam('extraEast') ?? getStoredNumber('silentwish_extraEastM') ?? baseOffEast
+      let offNorth =
+        getNumberParam('extraNorth') ?? getStoredNumber('silentwish_extraNorthM') ?? baseOffNorth
 
       // Apply optional ENU offset in meters before sampling heights (fixes systematic drift from reprojection).
-      const shiftedPts: Array<{ lon: number; lat: number }> = []
-      for (const { lon, lat } of usePts) {
-        if (offEast === 0 && offNorth === 0) {
-          shiftedPts.push({ lon, lat })
-          continue
+      const computeShiftedPts = (eM: number, nM: number) => {
+        const out: Array<{ lon: number; lat: number }> = []
+        for (const { lon, lat } of usePts) {
+          if (eM === 0 && nM === 0) {
+            out.push({ lon, lat })
+            continue
+          }
+          const base = Cartesian3.fromDegrees(lon, lat, 0)
+          const enu = Transforms.eastNorthUpToFixedFrame(base)
+          const shifted = Matrix4.multiplyByPoint(enu, new Cartesian3(eM, nM, 0), new Cartesian3())
+          const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(shifted)
+          if (carto) out.push({ lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) })
+          else out.push({ lon, lat })
         }
-        const base = Cartesian3.fromDegrees(lon, lat, 0)
-        const enu = Transforms.eastNorthUpToFixedFrame(base)
-        const shifted = Matrix4.multiplyByPoint(enu, new Cartesian3(offEast, offNorth, 0), new Cartesian3())
-        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(shifted)
-        if (carto) shiftedPts.push({ lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) })
-        else shiftedPts.push({ lon, lat })
+        return out
       }
 
-      const heights = has3DTiles ? await sampleGroundHeightMinForPoints(shiftedPts, radius) : new Array(shiftedPts.length).fill(0)
+      const shiftedPtsInitial = computeShiftedPts(offEast, offNorth)
+
+      // Sample ground ONCE for initial placement (small offset changes won't need re-sampling).
+      const heights =
+        has3DTiles ? await sampleGroundHeightMinForPoints(shiftedPtsInitial, radius) : new Array(shiftedPtsInitial.length).fill(0)
 
       const url = await IonResource.fromAssetId(env.ionExtraTreesModelAssetId)
-      for (let i = 0; i < shiftedPts.length; i++) {
-        const { lon, lat } = shiftedPts[i]
-        const h = heights[i]
-        const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset : 0 + offset
-        const pos = Cartesian3.fromDegrees(lon, lat, alt)
-        viewer.entities.add({
-          position: pos,
-          model: {
-            uri: url,
-            scale,
-            // keeps it visible without fiddling with materials
-            minimumPixelSize: 24,
-          },
-        })
+      const extraTreeEntities: string[] = []
+
+      const renderExtraTrees = (eM: number, nM: number) => {
+        // Remove previous
+        for (const id of extraTreeEntities) {
+          const ent = viewer.entities.getById(id)
+          if (ent) viewer.entities.remove(ent)
+        }
+        extraTreeEntities.length = 0
+
+        const shiftedPts = computeShiftedPts(eM, nM)
+        for (let i = 0; i < shiftedPts.length; i++) {
+          const { lon, lat } = shiftedPts[i]
+          const h = heights[i]
+          const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset : 0 + offset
+          const pos = Cartesian3.fromDegrees(lon, lat, alt)
+          const id = `extraTree:${i}`
+          viewer.entities.add({
+            id,
+            position: pos,
+            model: {
+              uri: url,
+              scale,
+              minimumPixelSize: 24,
+            },
+          })
+          extraTreeEntities.push(id)
+        }
+        setStoredNumber('silentwish_extraEastM', eM)
+        setStoredNumber('silentwish_extraNorthM', nM)
+        setStatus(`Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m`)
       }
-      setStatus(`Loaded ${shiftedPts.length} extra trees from ion GeoJSON.`)
+
+      renderExtraTrees(offEast, offNorth)
+
+      // Keyboard tuning: arrows move the whole set.
+      // - arrows: 1m
+      // - shift+arrows: 5m
+      // - alt+arrows: 0.2m
+      window.addEventListener('keydown', (ev) => {
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) return
+        const step = ev.shiftKey ? 5 : ev.altKey ? 0.2 : 1
+        if (ev.key === 'ArrowLeft') offEast -= step
+        if (ev.key === 'ArrowRight') offEast += step
+        if (ev.key === 'ArrowUp') offNorth += step
+        if (ev.key === 'ArrowDown') offNorth -= step
+        renderExtraTrees(offEast, offNorth)
+        ev.preventDefault()
+      })
     } catch (e) {
       setStatus(`Failed to load extra trees from ion. Details: ${e instanceof Error ? e.message : String(e)}`)
     }
