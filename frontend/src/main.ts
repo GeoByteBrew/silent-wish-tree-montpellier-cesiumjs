@@ -794,6 +794,9 @@ async function init() {
       // Per-tree Z overrides (meters). Keyed by tree index.
       const perTreeKey = 'silentwish_extraTreeDeltas'
       const perTreeDeltas: Record<string, number> = getStoredJson(perTreeKey, {})
+      // Per-tree scale multipliers (unitless). Keyed by tree index. Effective scale = extraScale * multiplier.
+      const perTreeScaleKey = 'silentwish_extraTreeScale'
+      const perTreeScaleMult: Record<string, number> = getStoredJson(perTreeScaleKey, {})
       let selectedTreeIdx: number | null = null
 
       // Apply optional ENU offset in meters before sampling heights (fixes systematic drift from reprojection).
@@ -839,6 +842,7 @@ async function init() {
           const { lon, lat } = shiftedPts[i]
           const h = heights[i]
           const localDelta = Number.isFinite(perTreeDeltas[String(i)]) ? perTreeDeltas[String(i)] : 0
+          const localScaleMult = Number.isFinite(perTreeScaleMult[String(i)]) ? perTreeScaleMult[String(i)] : 1
           const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset + extraGround + localDelta : 0 + offset + extraGround + localDelta
           const pos = Cartesian3.fromDegrees(lon, lat, alt)
           const id = `extraTree:${i}`
@@ -847,7 +851,7 @@ async function init() {
             position: pos,
             model: {
               uri: url,
-              scale: extraScale,
+              scale: extraScale * localScaleMult,
               minimumPixelSize: 24,
             },
           })
@@ -858,11 +862,16 @@ async function init() {
         setStoredNumber('silentwish_extraScale', extraScale)
         setStoredNumber('silentwish_extraGroundM', extraGround)
         setStoredJson(perTreeKey, perTreeDeltas)
+        setStoredJson(perTreeScaleKey, perTreeScaleMult)
         setStatus(
           `Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m scale=${extraScale.toFixed(
             2,
           )} ground=${extraGround.toFixed(2)}m${opts.resample ? ' (resampled)' : ''}${
-            selectedTreeIdx != null ? ` · selected #${selectedTreeIdx} Δz=${(perTreeDeltas[String(selectedTreeIdx)] ?? 0).toFixed(2)}m` : ''
+            selectedTreeIdx != null
+              ? ` · selected #${selectedTreeIdx} Δz=${(perTreeDeltas[String(selectedTreeIdx)] ?? 0).toFixed(2)}m ×s=${(
+                  perTreeScaleMult[String(selectedTreeIdx)] ?? 1
+                ).toFixed(2)}`
+              : ''
           }`,
         )
       }
@@ -894,6 +903,7 @@ async function init() {
       // - g: force resample ground at current offset
       // - - / = : scale down / up (shift = bigger step)
       // - [ / ] : ground offset down/up (shift = bigger step)
+      // - , / . : per-tree scale down/up when a tree is selected (shift = bigger step)
       let resampleTimer: number | null = null
       const scheduleResample = () => {
         if (!has3DTiles) return
@@ -919,6 +929,26 @@ async function init() {
         }
         if (ev.key === '=' || ev.key === '+') {
           extraScale = Math.min(10, extraScale + (ev.shiftKey ? 0.1 : 0.05))
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+
+        // Per-tree scale tuning
+        if ((ev.key === ',' || ev.key === '<') && selectedTreeIdx != null) {
+          const step = ev.shiftKey ? 0.1 : 0.05
+          const k = String(selectedTreeIdx)
+          const cur = perTreeScaleMult[k] ?? 1
+          perTreeScaleMult[k] = Math.max(0.1, cur - step)
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+        if ((ev.key === '.' || ev.key === '>') && selectedTreeIdx != null) {
+          const step = ev.shiftKey ? 0.1 : 0.05
+          const k = String(selectedTreeIdx)
+          const cur = perTreeScaleMult[k] ?? 1
+          perTreeScaleMult[k] = Math.min(5, cur + step)
           void renderExtraTrees(offEast, offNorth, { resample: false })
           ev.preventDefault()
           return
