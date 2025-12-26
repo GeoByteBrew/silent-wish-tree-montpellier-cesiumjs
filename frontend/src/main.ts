@@ -74,6 +74,10 @@ const env = {
   treeHeight: Number((import.meta.env.VITE_TREE_HEIGHT as string | undefined)?.trim() ?? ''),
   treeScale: Number((import.meta.env.VITE_TREE_SCALE as string | undefined)?.trim() ?? ''),
   treeHeadingDeg: Number((import.meta.env.VITE_TREE_HEADING_DEG as string | undefined)?.trim() ?? ''),
+
+  cameraLat: Number((import.meta.env.VITE_CAMERA_LAT as string | undefined)?.trim() ?? ''),
+  cameraLon: Number((import.meta.env.VITE_CAMERA_LON as string | undefined)?.trim() ?? ''),
+  cameraRadiusM: Number((import.meta.env.VITE_CAMERA_RADIUS_M as string | undefined)?.trim() ?? ''),
 }
 
 const ORNAMENTS = [
@@ -371,6 +375,61 @@ async function init() {
     }
   }
 
+  // Camera focus + movement clamp (Peyrou area)
+  // Defaults roughly point to Promenade du Peyrou; override via Vercel env vars if needed.
+  const camLatDeg = Number.isFinite(env.cameraLat) ? env.cameraLat : 43.6119
+  const camLonDeg = Number.isFinite(env.cameraLon) ? env.cameraLon : 3.8730
+  const camRadiusM = Number.isFinite(env.cameraRadiusM) ? env.cameraRadiusM : 100
+  const camCenter = Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0)
+  const enuToFixed = Transforms.eastNorthUpToFixedFrame(camCenter)
+  const fixedToEnu = Matrix4.inverse(enuToFixed, new Matrix4())
+
+  const controller = viewer.scene.screenSpaceCameraController
+  controller.enableLook = true
+  controller.enableRotate = true
+  controller.enableTilt = true
+  controller.enableZoom = true
+  controller.enableTranslate = true
+  // Keep zoom reasonable so users don't fly away via huge zoom-out.
+  controller.minimumZoomDistance = 10
+  controller.maximumZoomDistance = 600
+
+  let clamping = false
+  const scratchEnu = new Cartesian3()
+  const scratchFixed = new Cartesian3()
+
+  function clampCameraToRadius() {
+    if (clamping) return
+    const pos = viewer.camera.positionWC
+    Matrix4.multiplyByPoint(fixedToEnu, pos, scratchEnu)
+    const x = scratchEnu.x
+    const y = scratchEnu.y
+    const z = scratchEnu.z
+    const r = Math.sqrt(x * x + y * y)
+    if (r <= camRadiusM) return
+
+    const s = camRadiusM / Math.max(1e-6, r)
+    const clampedEnu = new Cartesian3(x * s, y * s, z)
+    Matrix4.multiplyByPoint(enuToFixed, clampedEnu, scratchFixed)
+
+    clamping = true
+    try {
+      viewer.camera.setView({
+        destination: scratchFixed,
+        orientation: {
+          heading: viewer.camera.heading,
+          pitch: viewer.camera.pitch,
+          roll: viewer.camera.roll,
+        },
+      })
+    } finally {
+      clamping = false
+    }
+  }
+
+  // Clamp after any camera change.
+  viewer.camera.changed.addEventListener(clampCameraToRadius)
+
   // Tree (placeholder: you will drop models into /public/models/)
   const treeUrl = '/models/tree.glb'
   // Default: L’Écusson, 34000 Montpellier
@@ -416,17 +475,19 @@ async function init() {
   // Camera presets
   const flyToCity = async () => {
     await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(treeLonDeg, treeLatDeg, 850),
+      destination: Cartesian3.fromDegrees(camLonDeg, camLatDeg, 350),
       orientation: { heading: 0, pitch: CesiumMath.toRadians(-35), roll: 0 },
       duration: 1.2,
     })
+    clampCameraToRadius()
   }
   const flyToTree = async () => {
     await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(treeLonDeg, treeLatDeg, 90),
+      destination: Cartesian3.fromDegrees(camLonDeg, camLatDeg, 120),
       orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
       duration: 1.0,
     })
+    clampCameraToRadius()
   }
   ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
   ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToTree()
