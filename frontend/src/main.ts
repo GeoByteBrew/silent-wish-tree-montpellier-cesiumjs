@@ -764,6 +764,7 @@ async function init() {
       // Allow tuning without redeploy:
       // - URL params: ?extraEast=-3&extraNorth=2 (meters)
       // - URL params: ?extraScale=0.6
+      // - URL params: ?extraGround=-0.5 (meters, added on top of VITE_EXTRA_TREES_GROUND_OFFSET_M)
       // - localStorage: silentwish_extraEastM / silentwish_extraNorthM
       const baseOffEast = Number.isFinite(env.extraTreesOffsetEastM) ? env.extraTreesOffsetEastM : 0
       const baseOffNorth = Number.isFinite(env.extraTreesOffsetNorthM) ? env.extraTreesOffsetNorthM : 0
@@ -773,6 +774,8 @@ async function init() {
         getNumberParam('extraNorth') ?? getStoredNumber('silentwish_extraNorthM') ?? baseOffNorth
       let extraScale =
         getNumberParam('extraScale') ?? getStoredNumber('silentwish_extraScale') ?? scale
+      let extraGround =
+        getNumberParam('extraGround') ?? getStoredNumber('silentwish_extraGroundM') ?? 0
 
       // Apply optional ENU offset in meters before sampling heights (fixes systematic drift from reprojection).
       const computeShiftedPts = (eM: number, nM: number) => {
@@ -816,7 +819,7 @@ async function init() {
         for (let i = 0; i < shiftedPts.length; i++) {
           const { lon, lat } = shiftedPts[i]
           const h = heights[i]
-          const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset : 0 + offset
+          const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset + extraGround : 0 + offset + extraGround
           const pos = Cartesian3.fromDegrees(lon, lat, alt)
           const id = `extraTree:${i}`
           viewer.entities.add({
@@ -833,10 +836,11 @@ async function init() {
         setStoredNumber('silentwish_extraEastM', eM)
         setStoredNumber('silentwish_extraNorthM', nM)
         setStoredNumber('silentwish_extraScale', extraScale)
+        setStoredNumber('silentwish_extraGroundM', extraGround)
         setStatus(
           `Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m scale=${extraScale.toFixed(
             2,
-          )}${opts.resample ? ' (resampled)' : ''}`,
+          )} ground=${extraGround.toFixed(2)}m${opts.resample ? ' (resampled)' : ''}`,
         )
       }
 
@@ -848,6 +852,7 @@ async function init() {
       // - alt+arrows: 0.2m
       // - g: force resample ground at current offset
       // - - / = : scale down / up (shift = bigger step)
+      // - [ / ] : ground offset down/up (shift = bigger step)
       let resampleTimer: number | null = null
       const scheduleResample = () => {
         if (!has3DTiles) return
@@ -873,6 +878,20 @@ async function init() {
         }
         if (ev.key === '=' || ev.key === '+') {
           extraScale = Math.min(10, extraScale + (ev.shiftKey ? 0.1 : 0.05))
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+
+        // Ground offset tuning (does not require resampling)
+        if (ev.key === '[') {
+          extraGround -= ev.shiftKey ? 0.5 : 0.1
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+        if (ev.key === ']') {
+          extraGround += ev.shiftKey ? 0.5 : 0.1
           void renderExtraTrees(offEast, offNorth, { resample: false })
           ev.preventDefault()
           return
