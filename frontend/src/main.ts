@@ -77,7 +77,6 @@ const env = {
 
   cameraLat: Number((import.meta.env.VITE_CAMERA_LAT as string | undefined)?.trim() ?? ''),
   cameraLon: Number((import.meta.env.VITE_CAMERA_LON as string | undefined)?.trim() ?? ''),
-  cameraRadiusM: Number((import.meta.env.VITE_CAMERA_RADIUS_M as string | undefined)?.trim() ?? ''),
 }
 
 const ORNAMENTS = [
@@ -396,11 +395,10 @@ async function init() {
     setStatus('Tree coordinates invalid; placing tree at Peyrou defaults.')
   }
 
-  // Camera focus + movement clamp (defaults to the tree location)
+  // Camera focus (defaults to the tree location)
   // You can override via Vercel env vars if needed.
   let camLatDeg = Number.isFinite(env.cameraLat) ? env.cameraLat : treeLatDeg
   let camLonDeg = Number.isFinite(env.cameraLon) ? env.cameraLon : treeLonDeg
-  const camRadiusM = Number.isFinite(env.cameraRadiusM) ? env.cameraRadiusM : 100
 
   // Auto-fix swapped camera coords (common mistake in env vars).
   const inMontpellierCam = (lat: number, lon: number) => lat >= 43 && lat <= 44 && lon >= 3 && lon <= 4
@@ -416,55 +414,12 @@ async function init() {
     setStatus('Camera coordinates invalid; falling back to tree location.')
   }
 
-  const camCenter = Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0)
-  const enuToFixed = Transforms.eastNorthUpToFixedFrame(camCenter)
-  const fixedToEnu = Matrix4.inverse(enuToFixed, new Matrix4())
-
   const controller = viewer.scene.screenSpaceCameraController
   controller.enableLook = true
   controller.enableRotate = true
   controller.enableTilt = true
   controller.enableZoom = true
   controller.enableTranslate = true
-  // Keep zoom reasonable so users don't fly away via huge zoom-out.
-  controller.minimumZoomDistance = 10
-  controller.maximumZoomDistance = 600
-
-  let clamping = false
-  const scratchEnu = new Cartesian3()
-  const scratchFixed = new Cartesian3()
-
-  function clampCameraToRadius() {
-    if (clamping) return
-    const pos = viewer.camera.positionWC
-    Matrix4.multiplyByPoint(fixedToEnu, pos, scratchEnu)
-    const x = scratchEnu.x
-    const y = scratchEnu.y
-    const z = scratchEnu.z
-    const r = Math.sqrt(x * x + y * y)
-    if (r <= camRadiusM) return
-
-    const s = camRadiusM / Math.max(1e-6, r)
-    const clampedEnu = new Cartesian3(x * s, y * s, z)
-    Matrix4.multiplyByPoint(enuToFixed, clampedEnu, scratchFixed)
-
-    clamping = true
-    try {
-      viewer.camera.setView({
-        destination: scratchFixed,
-        orientation: {
-          heading: viewer.camera.heading,
-          pitch: viewer.camera.pitch,
-          roll: viewer.camera.roll,
-        },
-      })
-    } finally {
-      clamping = false
-    }
-  }
-
-  // Clamp after any camera change.
-  viewer.camera.changed.addEventListener(clampCameraToRadius)
   // Cesium height is meters above the ellipsoid. Start a bit above ground to ensure visibility, then tune.
   const treeAltM = Number.isFinite(env.treeHeight) ? env.treeHeight : 25
   const treeScale = Number.isFinite(env.treeScale) ? env.treeScale : 2.0
@@ -505,7 +460,6 @@ async function init() {
       orientation: { heading: 0, pitch: CesiumMath.toRadians(-35), roll: 0 },
       duration: 1.2,
     })
-    clampCameraToRadius()
   }
   const flyToTree = async () => {
     await viewer.camera.flyTo({
@@ -513,7 +467,6 @@ async function init() {
       orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
       duration: 1.0,
     })
-    clampCameraToRadius()
   }
   ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
   ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToTree()
