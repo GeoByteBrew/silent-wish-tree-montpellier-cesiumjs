@@ -90,6 +90,8 @@ const env = {
   extraTreesGroundOffsetM: Number((import.meta.env.VITE_EXTRA_TREES_GROUND_OFFSET_M as string | undefined)?.trim() ?? ''),
   extraTreesSampleRadiusM: Number((import.meta.env.VITE_EXTRA_TREES_GROUND_SAMPLE_RADIUS_M as string | undefined)?.trim() ?? ''),
   extraTreesLimit: Number((import.meta.env.VITE_EXTRA_TREES_LIMIT as string | undefined)?.trim() ?? ''),
+  extraTreesOffsetEastM: Number((import.meta.env.VITE_EXTRA_TREES_OFFSET_EAST_M as string | undefined)?.trim() ?? ''),
+  extraTreesOffsetNorthM: Number((import.meta.env.VITE_EXTRA_TREES_OFFSET_NORTH_M as string | undefined)?.trim() ?? ''),
 
   cameraLat: Number((import.meta.env.VITE_CAMERA_LAT as string | undefined)?.trim() ?? ''),
   cameraLon: Number((import.meta.env.VITE_CAMERA_LON as string | undefined)?.trim() ?? ''),
@@ -640,7 +642,16 @@ async function init() {
         if (!p) continue
         const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(p)
         if (!carto) continue
-        pts.push({ lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) })
+        let lon = CesiumMath.toDegrees(carto.longitude)
+        let lat = CesiumMath.toDegrees(carto.latitude)
+
+        // Auto-fix swapped lon/lat if the GeoJSON was exported with axis order reversed.
+        const inMontpellier = (la: number, lo: number) => la >= 43 && la <= 44 && lo >= 3 && lo <= 4
+        if (!inMontpellier(lat, lon) && inMontpellier(lon, lat)) {
+          ;[lat, lon] = [lon, lat]
+        }
+
+        pts.push({ lon, lat })
       }
 
       const limit = Number.isFinite(env.extraTreesLimit) ? Math.max(1, Math.min(500, env.extraTreesLimit)) : 80
@@ -649,12 +660,29 @@ async function init() {
       const scale = Number.isFinite(env.extraTreesScale) ? env.extraTreesScale : 1.2
       const offset = Number.isFinite(env.extraTreesGroundOffsetM) ? env.extraTreesGroundOffsetM : 0.8
       const radius = Number.isFinite(env.extraTreesSampleRadiusM) ? env.extraTreesSampleRadiusM : 4
+      const offEast = Number.isFinite(env.extraTreesOffsetEastM) ? env.extraTreesOffsetEastM : 0
+      const offNorth = Number.isFinite(env.extraTreesOffsetNorthM) ? env.extraTreesOffsetNorthM : 0
 
-      const heights = has3DTiles ? await sampleGroundHeightMinForPoints(usePts, radius) : new Array(usePts.length).fill(0)
+      // Apply optional ENU offset in meters before sampling heights (fixes systematic drift from reprojection).
+      const shiftedPts: Array<{ lon: number; lat: number }> = []
+      for (const { lon, lat } of usePts) {
+        if (offEast === 0 && offNorth === 0) {
+          shiftedPts.push({ lon, lat })
+          continue
+        }
+        const base = Cartesian3.fromDegrees(lon, lat, 0)
+        const enu = Transforms.eastNorthUpToFixedFrame(base)
+        const shifted = Matrix4.multiplyByPoint(enu, new Cartesian3(offEast, offNorth, 0), new Cartesian3())
+        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(shifted)
+        if (carto) shiftedPts.push({ lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) })
+        else shiftedPts.push({ lon, lat })
+      }
+
+      const heights = has3DTiles ? await sampleGroundHeightMinForPoints(shiftedPts, radius) : new Array(shiftedPts.length).fill(0)
 
       const url = await IonResource.fromAssetId(env.ionExtraTreesModelAssetId)
-      for (let i = 0; i < usePts.length; i++) {
-        const { lon, lat } = usePts[i]
+      for (let i = 0; i < shiftedPts.length; i++) {
+        const { lon, lat } = shiftedPts[i]
         const h = heights[i]
         const alt = typeof h === 'number' && Number.isFinite(h) ? h + offset : 0 + offset
         const pos = Cartesian3.fromDegrees(lon, lat, alt)
@@ -668,7 +696,7 @@ async function init() {
           },
         })
       }
-      setStatus(`Loaded ${usePts.length} extra trees from ion GeoJSON.`)
+      setStatus(`Loaded ${shiftedPts.length} extra trees from ion GeoJSON.`)
     } catch (e) {
       setStatus(`Failed to load extra trees from ion. Details: ${e instanceof Error ? e.message : String(e)}`)
     }
