@@ -1594,30 +1594,57 @@ async function init() {
     const file = orn?.file ?? ornamentId
     const url = `/models/ornaments/${file}.glb`
 
-    // Place ornaments close to the visible tree canopy.
-    // Previous fixed numbers (radius 6–12m, height 18–36m) could put ornaments far away / floating,
-    // especially when the tree model scale/layout differs.
-    // Use the tree model bounds (when available) as a better scale reference.
-    const bsRadius = treeModel?.boundingSphere?.radius
-    // Fallback tuned for our Montpellier tree if bounding sphere isn't available yet.
-    const r = Number.isFinite(bsRadius) && (bsRadius as number) > 0 ? (bsRadius as number) : 12
-    // Gentle scaling only (clamped) so ornaments don't fly away at big tree scales.
-    const scaleFactor = Math.min(1.2, Math.max(0.9, Math.sqrt(mainScale / 2.0)))
-    const angle = (anchorIndex % 360) * (Math.PI / 180)
-    // Keep within ~20–45% of tree radius, so it hugs branches.
-    const radius = (r * (0.2 + ((anchorIndex % 13) / 13) * 0.25)) * scaleFactor
-    // Height within ~25–85% of tree radius (acts as rough tree "height" proxy).
-    const height = (r * (0.25 + ((anchorIndex % 25) / 25) * 0.6)) * scaleFactor
+    // Deterministic anchor points on a cone surface around the tree to avoid ornaments ending up
+    // inside the model or floating far away. This is a lightweight proxy for real mesh anchors.
+    //
+    // We build a local ENU frame around the model's bounding sphere center and approximate:
+    // - base point = center - up * (0.9 * radius)
+    // - cone height H ≈ 1.7 * radius
+    // - base radius Rb ≈ 0.55 * radius
+    // Then we choose a point on the cone surface using two pseudo-random values derived from anchorIndex.
+    const bs = treeModel?.boundingSphere
+    const bsR = bs?.radius
+    const r = Number.isFinite(bsR) && (bsR as number) > 0 ? (bsR as number) : 12
+    const center = bs?.center ?? (treeModel ? Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3()) : treePosition)
 
-    const east = radius * Math.cos(angle)
-    const north = radius * Math.sin(angle)
+    // Simple deterministic PRNG from anchorIndex (0..1)
+    const prng = (seed: number) => {
+      const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
+      return x - Math.floor(x)
+    }
+    const u = prng(anchorIndex + 1) // angle
+    const v = prng(anchorIndex + 2) // height
 
-    // Approximate ENU offset around current tree position (good enough for "local feeling")
-    const origin = treeModel ? Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3()) : treePosition
-    const enu = Transforms.eastNorthUpToFixedFrame(origin)
-    const offset = new Cartesian3(east, north, height)
-    const m = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
-    const modelMatrix = Matrix4.fromTranslation(m)
+    const H = 1.7 * r
+    const Rb = 0.55 * r
+    // Avoid very bottom/top (keeps ornaments on visible canopy)
+    const z = (0.18 + v * 0.74) * H
+    const t = z / H // 0..1
+    // Cone-ish taper with a bit of curve (more natural canopy)
+    const rr = Math.max(0.6, Rb * Math.pow(1 - t, 0.75))
+    const ang = u * Math.PI * 2
+    let dx = rr * Math.cos(ang)
+    let dy = rr * Math.sin(ang)
+    // Push outward a bit so we don't clip into the mesh
+    const len = Math.max(1e-6, Math.hypot(dx, dy))
+    const push = 0.35 + 0.15 * prng(anchorIndex + 3)
+    dx += (dx / len) * push
+    dy += (dy / len) * push
+
+    const enu = Transforms.eastNorthUpToFixedFrame(center)
+    // Extract ENU axes (columns 0..2) from matrix
+    const eastAxis = new Cartesian3(enu[0], enu[1], enu[2])
+    const northAxis = new Cartesian3(enu[4], enu[5], enu[6])
+    const upAxis = new Cartesian3(enu[8], enu[9], enu[10])
+    const base = Cartesian3.add(center, Cartesian3.multiplyByScalar(upAxis, -0.9 * r, new Cartesian3()), new Cartesian3())
+
+    const pos = new Cartesian3()
+    Cartesian3.add(pos, base, pos)
+    Cartesian3.add(pos, Cartesian3.multiplyByScalar(eastAxis, dx, new Cartesian3()), pos)
+    Cartesian3.add(pos, Cartesian3.multiplyByScalar(northAxis, dy, new Cartesian3()), pos)
+    Cartesian3.add(pos, Cartesian3.multiplyByScalar(upAxis, z, new Cartesian3()), pos)
+
+    const modelMatrix = Matrix4.fromTranslation(pos)
     try {
       const model = await Model.fromGltfAsync({
         url,
