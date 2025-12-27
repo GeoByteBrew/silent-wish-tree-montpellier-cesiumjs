@@ -486,6 +486,7 @@ async function init() {
   // --- Layout persistence helpers ---
   const LAYOUT_FLAG = 'silentwish_user_layout'
   const DEFAULT_LAYOUT_URL = '/layout/default-layout.json'
+  const BACKUP_KEY = 'silentwish_layout_backup'
 
   const mainKey = {
     e: 'silentwish_mainTreeEastM',
@@ -563,15 +564,45 @@ async function init() {
     localStorage.removeItem(LAYOUT_FLAG)
   }
 
+  function hasAnyLocalTweaks(): boolean {
+    const keysToCheck = [
+      ...Object.values(mainKey),
+      ...Object.values(extraKeys),
+      'silentwish_extraTreeDeltas',
+      'silentwish_extraTreeScale',
+      'silentwish_extraTreeXY',
+      'silentwish_extraGroundM',
+      'silentwish_extraScale',
+      'silentwish_extraEastM',
+      'silentwish_extraNorthM',
+    ]
+    return keysToCheck.some((k) => localStorage.getItem(k) != null)
+  }
+
   async function maybeApplyDefaultLayout() {
     const force = new URLSearchParams(window.location.search).get('layout') === 'default'
     const hasUser = localStorage.getItem(LAYOUT_FLAG) === '1'
+    // If we already have user tweaks, never auto-apply defaults (unless forced).
     if (hasUser && !force) return
+
+    // If there are existing tweak keys but the flag isn't set yet (older versions), trust the existing values.
+    // This prevents accidental overwrites on deploy.
+    if (!force && hasAnyLocalTweaks()) {
+      localStorage.setItem(LAYOUT_FLAG, '1')
+      setStatus('Existing local tweaks detected; default layout will not overwrite them.')
+      return
+    }
     try {
       const r = await fetch(DEFAULT_LAYOUT_URL, { cache: 'no-store' })
       if (!r.ok) return
       const j = (await r.json()) as LayoutV1
       if (j?.version !== 1) return
+      // Backup whatever exists before applying defaults.
+      try {
+        setStoredJson(BACKUP_KEY, collectLayout())
+      } catch {
+        // ignore
+      }
       applyLayout(j)
       setStatus('Default layout applied.')
       // reload to ensure all runtime state picks up the new values
@@ -611,6 +642,29 @@ async function init() {
     setStatus('Local layout reset. Reloading…')
     location.reload()
   }
+
+  // Expose a quick restore if a default overwrite happened.
+  const restoreBtn = document.createElement('button')
+  restoreBtn.className = 'secondary'
+  restoreBtn.type = 'button'
+  restoreBtn.textContent = 'Restore'
+  restoreBtn.onclick = () => {
+    const b = getStoredJson<LayoutV1 | null>(BACKUP_KEY, null)
+    if (!b) {
+      setStatus('No backup found.')
+      return
+    }
+    try {
+      applyLayout(b)
+      setStatus('Backup restored. Reloading…')
+      location.reload()
+    } catch (e) {
+      setStatus(`Restore failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  // Insert restore button next to reset
+  const resetBtn = $('#resetLayoutBtn')
+  resetBtn.parentElement?.insertBefore(restoreBtn, resetBtn.nextSibling)
 
   // Apply default layout if present and user layout not set (or ?layout=default)
   await maybeApplyDefaultLayout()
