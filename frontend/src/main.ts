@@ -1648,7 +1648,20 @@ async function init() {
         },
         body: JSON.stringify(payload),
       })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) {
+        let detail = ''
+        try {
+          const j = (await r.json()) as { error?: string; detail?: string }
+          detail = [j?.error, j?.detail].filter(Boolean).join(': ')
+        } catch {
+          try {
+            detail = (await r.text()).slice(0, 500)
+          } catch {
+            // ignore
+          }
+        }
+        throw new Error(`HTTP ${r.status}${detail ? ` — ${detail}` : ''}`)
+      }
       const j = (await r.json()) as { ok: boolean; anchor_index: number }
       await placeLocalOrnament(j.anchor_index, selectedOrnament)
       void fetchStats()
@@ -1664,8 +1677,16 @@ async function init() {
 
       status.textContent = t('done')
       wishInput.value = ''
-    } catch {
-      setStatus(t('errorServer'))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      let hint = ''
+      if (msg.includes('captcha_failed')) {
+        hint =
+          ' (Turnstile: Cloudflare dashboard → widget → Allowed hostnames içine Vercel domainini ekle, sonra redeploy.)'
+      } else if (msg.includes('rate_limited')) {
+        hint = ' (Rate limit: 1 saat içinde çok fazla deneme.)'
+      }
+      setStatus(`${t('errorServer')} ${msg}${hint}`)
     } finally {
       hangBtn.disabled = false
       hangBtn.textContent = t('hang')
