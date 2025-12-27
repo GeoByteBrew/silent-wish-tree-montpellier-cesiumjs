@@ -3,6 +3,7 @@ import { corsHeaders, json } from '../_shared/cors.ts'
 import { supabaseAdmin } from '../_shared/supabase.ts'
 import { moderateWish } from '../_shared/moderation.ts'
 import { verifyTurnstile } from '../_shared/turnstile.ts'
+import { getEnv } from '../_shared/env.ts'
 
 type WishRequest = {
   text?: string
@@ -15,6 +16,7 @@ type WishRequest = {
 
 const MAX_LEN = 140
 const ANCHOR_COUNT = 1200
+const DEFAULT_RATE_LIMIT_PER_HOUR = 60
 
 function pickAnchor(): number {
   return Math.floor(Math.random() * ANCHOR_COUNT)
@@ -46,7 +48,13 @@ serve(async (req) => {
 
   const supabase = supabaseAdmin()
 
-  // Minimal rate limit: 5 per hour per client_id (client_id is random UUID stored in localStorage).
+  // Rate limit per hour per client_id (client_id is random UUID stored in localStorage).
+  // Configurable via env RATE_LIMIT_PER_HOUR (defaults higher to allow iteration during launch).
+  const rateLimitPerHour = (() => {
+    const raw = (getEnv('RATE_LIMIT_PER_HOUR') ?? '').trim()
+    const n = Number(raw)
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_RATE_LIMIT_PER_HOUR
+  })()
   if (client_id) {
     const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
     const { count } = await supabase
@@ -54,7 +62,7 @@ serve(async (req) => {
       .select('id', { count: 'exact', head: true })
       .eq('client_id', client_id)
       .gte('created_at', since)
-    if ((count ?? 0) >= 5) return json({ error: 'rate_limited' }, { status: 429 })
+    if ((count ?? 0) >= rateLimitPerHour) return json({ error: 'rate_limited' }, { status: 429 })
   }
 
   const mod = moderateWish(text)
