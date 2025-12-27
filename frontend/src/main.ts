@@ -397,7 +397,7 @@ async function init() {
           <div class="hud-row">
             <span class="badge" id="totalBadge">…</span>
             <button class="ghost" id="revealBtn"></button>
-          </div>
+    </div>
         </div>
       </div>
       <aside class="panel">
@@ -1594,13 +1594,20 @@ async function init() {
     const file = orn?.file ?? ornamentId
     const url = `/models/ornaments/${file}.glb`
 
-    // Keep offsets mostly stable. With large tree scales, multiplying offsets linearly can throw ornaments
-    // tens of meters away (hard to spot). Use a gentle, clamped factor instead.
-    // Base tuning assumes treeScale≈2.0
-    const scaleFactor = Math.min(1.35, Math.max(0.85, Math.sqrt(mainScale / 2.0)))
+    // Place ornaments close to the visible tree canopy.
+    // Previous fixed numbers (radius 6–12m, height 18–36m) could put ornaments far away / floating,
+    // especially when the tree model scale/layout differs.
+    // Use the tree model bounds (when available) as a better scale reference.
+    const bsRadius = treeModel?.boundingSphere?.radius
+    // Fallback tuned for our Montpellier tree if bounding sphere isn't available yet.
+    const r = Number.isFinite(bsRadius) && (bsRadius as number) > 0 ? (bsRadius as number) : 12
+    // Gentle scaling only (clamped) so ornaments don't fly away at big tree scales.
+    const scaleFactor = Math.min(1.2, Math.max(0.9, Math.sqrt(mainScale / 2.0)))
     const angle = (anchorIndex % 360) * (Math.PI / 180)
-    const radius = (6 + ((anchorIndex % 13) / 13) * 6) * scaleFactor
-    const height = (18 + ((anchorIndex % 25) / 25) * 18) * scaleFactor
+    // Keep within ~20–45% of tree radius, so it hugs branches.
+    const radius = (r * (0.2 + ((anchorIndex % 13) / 13) * 0.25)) * scaleFactor
+    // Height within ~25–85% of tree radius (acts as rough tree "height" proxy).
+    const height = (r * (0.25 + ((anchorIndex % 25) / 25) * 0.6)) * scaleFactor
 
     const east = radius * Math.cos(angle)
     const north = radius * Math.sin(angle)
