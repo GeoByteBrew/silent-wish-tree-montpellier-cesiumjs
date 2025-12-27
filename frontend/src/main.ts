@@ -1072,6 +1072,32 @@ async function init() {
 
       await renderExtraTrees(offEast, offNorth, { resample: true })
 
+      const resetExtraTreesEdits = async () => {
+        // Reset globals to base env defaults
+        offEast = baseOffEast
+        offNorth = baseOffNorth
+        extraScale = scale
+        extraGround = 0
+        selectedTreeIdx = null
+
+        // Clear per-tree overrides
+        for (const k of Object.keys(perTreeDeltas)) delete perTreeDeltas[k]
+        for (const k of Object.keys(perTreeScaleMult)) delete perTreeScaleMult[k]
+        for (const k of Object.keys(perTreeXY)) delete perTreeXY[k]
+
+        // Clear persisted values
+        localStorage.removeItem('silentwish_extraEastM')
+        localStorage.removeItem('silentwish_extraNorthM')
+        localStorage.removeItem('silentwish_extraScale')
+        localStorage.removeItem('silentwish_extraGroundM')
+        localStorage.removeItem('silentwish_extraTreeDeltas')
+        localStorage.removeItem('silentwish_extraTreeScale')
+        localStorage.removeItem('silentwish_extraTreeXY')
+
+        await renderExtraTrees(offEast, offNorth, { resample: true })
+        setStatus('Extra trees edits reset (globals + per-tree overrides).')
+      }
+
       // Click-to-select a single extra tree for per-tree Z adjustments.
       const pickHandler = new ScreenSpaceEventHandler(viewer.scene.canvas)
       pickHandler.setInputAction((movement: any) => {
@@ -1130,6 +1156,13 @@ async function init() {
       window.addEventListener('keydown', (ev) => {
         // If main tree is in edit mode, ignore extra-trees hotkeys to avoid conflicts.
         if (mainTreeSelected) return
+
+        // Reset extra trees edits (safety: requires Shift+R)
+        if ((ev.key === 'r' || ev.key === 'R') && ev.shiftKey) {
+          void resetExtraTreesEdits()
+          ev.preventDefault()
+          return
+        }
 
         if (ev.key === 'g' || ev.key === 'G') {
           void renderExtraTrees(offEast, offNorth, { resample: true })
