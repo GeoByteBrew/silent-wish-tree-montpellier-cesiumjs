@@ -1604,8 +1604,12 @@ async function init() {
     // Then we choose a point on the cone surface using two pseudo-random values derived from anchorIndex.
     const bs = treeModel?.boundingSphere
     const bsR = bs?.radius
-    const r = Number.isFinite(bsR) && (bsR as number) > 0 ? (bsR as number) : 12
-    const center = bs?.center ?? (treeModel ? Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3()) : treePosition)
+    // Always anchor to the actual tree model position in world coordinates.
+    // (Some Cesium primitives expose boundingSphere.center in local/model space.)
+    const origin = treeModel ? Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3()) : treePosition
+    const rRaw = Number.isFinite(bsR) && (bsR as number) > 0 ? (bsR as number) : 12
+    // Clamp effective radius so ornaments can't end up 50–200m up if bounds are large.
+    const r = Math.min(25, Math.max(8, rRaw))
 
     // Simple deterministic PRNG from anchorIndex (0..1)
     const prng = (seed: number) => {
@@ -1631,19 +1635,10 @@ async function init() {
     dx += (dx / len) * push
     dy += (dy / len) * push
 
-    const enu = Transforms.eastNorthUpToFixedFrame(center)
-    // Extract ENU axes (columns 0..2) from matrix
-    const eastAxis = new Cartesian3(enu[0], enu[1], enu[2])
-    const northAxis = new Cartesian3(enu[4], enu[5], enu[6])
-    const upAxis = new Cartesian3(enu[8], enu[9], enu[10])
-    const base = Cartesian3.add(center, Cartesian3.multiplyByScalar(upAxis, -0.9 * r, new Cartesian3()), new Cartesian3())
-
-    const pos = new Cartesian3()
-    Cartesian3.add(pos, base, pos)
-    Cartesian3.add(pos, Cartesian3.multiplyByScalar(eastAxis, dx, new Cartesian3()), pos)
-    Cartesian3.add(pos, Cartesian3.multiplyByScalar(northAxis, dy, new Cartesian3()), pos)
-    Cartesian3.add(pos, Cartesian3.multiplyByScalar(upAxis, z, new Cartesian3()), pos)
-
+    const enu = Transforms.eastNorthUpToFixedFrame(origin)
+    // Offset is expressed in local ENU meters: (east, north, up)
+    const offset = new Cartesian3(dx, dy, -0.9 * r + z)
+    const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
     const modelMatrix = Matrix4.fromTranslation(pos)
     try {
       const model = await Model.fromGltfAsync({
