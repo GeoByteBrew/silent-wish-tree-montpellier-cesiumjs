@@ -617,6 +617,18 @@ async function init() {
     }
   }
 
+  // Shift a lon/lat coordinate by ENU meters (east/north) around that coordinate.
+  // Useful for systematic drift correction and per-tree nudging without touching the original GeoJSON.
+  const shiftLonLatByEnu = (lon: number, lat: number, eM: number, nM: number) => {
+    if (eM === 0 && nM === 0) return { lon, lat }
+    const base = Cartesian3.fromDegrees(lon, lat, 0)
+    const enu = Transforms.eastNorthUpToFixedFrame(base)
+    const shifted = Matrix4.multiplyByPoint(enu, new Cartesian3(eM, nM, 0), new Cartesian3())
+    const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(shifted)
+    if (!carto) return { lon, lat }
+    return { lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) }
+  }
+
   // Tree (placeholder: you will drop models into /public/models/)
   const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
   const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
@@ -750,6 +762,171 @@ async function init() {
     )
   }
 
+  // ---- Main tree live edit (XY/scale/heading/ground trim) ----
+  // Stored locally (per device) so you can fine-tune placement without redeploy loops.
+  const mainKey = {
+    e: 'silentwish_mainTreeEastM',
+    n: 'silentwish_mainTreeNorthM',
+    s: 'silentwish_mainTreeScale',
+    h: 'silentwish_mainTreeHeadingDeg',
+    g: 'silentwish_mainTreeGroundTrimM',
+  }
+  let mainEast = getNumberParam('treeEast') ?? getStoredNumber(mainKey.e) ?? 0
+  let mainNorth = getNumberParam('treeNorth') ?? getStoredNumber(mainKey.n) ?? 0
+  let mainScale = getNumberParam('treeScale') ?? getStoredNumber(mainKey.s) ?? treeScale
+  let mainHeadingDeg = getNumberParam('treeHeading') ?? getStoredNumber(mainKey.h) ?? headingDeg
+  let mainGroundTrim = getNumberParam('treeGround') ?? getStoredNumber(mainKey.g) ?? 0
+  const baseTreeLon = treeLonDeg
+  const baseTreeLat = treeLatDeg
+  let mainSelected = false
+  let treeResampleTimer: number | null = null
+
+  const shiftBaseTree = () => {
+    const shifted = shiftLonLatByEnu(baseTreeLon, baseTreeLat, mainEast, mainNorth)
+    return shifted
+  }
+
+  const updateMainTreeModelMatrix = async (opts: { resample: boolean }) => {
+    if (!treeModel) return
+    const shifted = shiftBaseTree()
+    const lon = shifted.lon
+    const lat = shifted.lat
+
+    let alt = treeAltM
+    if (has3DTiles && opts.resample) {
+      const ground = await sampleGroundHeightMinMeters(lon, lat, sampleRadiusM)
+      if (ground != null) alt = ground + groundOffsetM + mainGroundTrim
+      else alt = treeAltM + mainGroundTrim
+    } else {
+      alt = treeAltM + mainGroundTrim
+    }
+
+    const pos = Cartesian3.fromDegrees(lon, lat, alt)
+    const q = Transforms.headingPitchRollQuaternion(pos, new HeadingPitchRoll(CesiumMath.toRadians(mainHeadingDeg), 0, 0))
+    const m = Matrix4.fromTranslationQuaternionRotationScale(pos, q, new Cartesian3(mainScale, mainScale, mainScale), new Matrix4())
+    treeModel.modelMatrix = m
+
+    setStoredNumber(mainKey.e, mainEast)
+    setStoredNumber(mainKey.n, mainNorth)
+    setStoredNumber(mainKey.s, mainScale)
+    setStoredNumber(mainKey.h, mainHeadingDeg)
+    setStoredNumber(mainKey.g, mainGroundTrim)
+    setStatus(
+      `Main tree${mainSelected ? ' (selected)' : ''}: east=${mainEast.toFixed(1)}m north=${mainNorth.toFixed(
+        1,
+      )}m scale=${mainScale.toFixed(2)} heading=${mainHeadingDeg.toFixed(1)}° groundTrim=${mainGroundTrim.toFixed(2)}m${
+        opts.resample ? ' (resampled)' : ''
+      }`,
+    )
+  }
+
+  // Apply any stored overrides once at startup.
+  if (treeModel) {
+    void updateMainTreeModelMatrix({ resample: true })
+  }
+
+  const scheduleMainTreeResample = () => {
+    if (!has3DTiles) return
+    if (treeResampleTimer != null) window.clearTimeout(treeResampleTimer)
+    treeResampleTimer = window.setTimeout(() => void updateMainTreeModelMatrix({ resample: true }), 250)
+  }
+
+  // Click the main tree to toggle "selected" mode.
+  if (treeModel) {
+    const pickTreeHandler = new ScreenSpaceEventHandler(viewer.scene.canvas)
+    pickTreeHandler.setInputAction((movement: any) => {
+      const picked = viewer.scene.pick(movement.position)
+      const prim = (picked as any)?.primitive
+      if (prim === treeModel) {
+        mainSelected = !mainSelected
+        void updateMainTreeModelMatrix({ resample: false })
+      }
+    }, ScreenSpaceEventType.LEFT_CLICK)
+  }
+
+  // Keyboard controls (only when main tree is selected):
+  // - WASD: move north/west/south/east (shift=5m, alt=0.2m)
+  // - [ / ]: ground trim down/up (shift=0.5m)
+  // - - / = : scale down/up (shift=0.1)
+  // - Q / E : heading rotate left/right (shift=15°, alt=1°)
+  // - G : force resample
+  window.addEventListener('keydown', (ev) => {
+    if (!mainSelected) return
+    const step = ev.shiftKey ? 5 : ev.altKey ? 0.2 : 1
+    const stepSmall = ev.shiftKey ? 0.1 : 0.05
+    const stepDeg = ev.shiftKey ? 15 : ev.altKey ? 1 : 5
+
+    if (ev.key === 'g' || ev.key === 'G') {
+      void updateMainTreeModelMatrix({ resample: true })
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === 'w' || ev.key === 'W') {
+      mainNorth += step
+      void updateMainTreeModelMatrix({ resample: false })
+      scheduleMainTreeResample()
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === 's' || ev.key === 'S') {
+      mainNorth -= step
+      void updateMainTreeModelMatrix({ resample: false })
+      scheduleMainTreeResample()
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === 'a' || ev.key === 'A') {
+      mainEast -= step
+      void updateMainTreeModelMatrix({ resample: false })
+      scheduleMainTreeResample()
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === 'd' || ev.key === 'D') {
+      mainEast += step
+      void updateMainTreeModelMatrix({ resample: false })
+      scheduleMainTreeResample()
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === '[') {
+      mainGroundTrim -= ev.shiftKey ? 0.5 : 0.1
+      void updateMainTreeModelMatrix({ resample: false })
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === ']') {
+      mainGroundTrim += ev.shiftKey ? 0.5 : 0.1
+      void updateMainTreeModelMatrix({ resample: false })
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === '-' || ev.key === '_') {
+      mainScale = Math.max(0.05, mainScale - stepSmall)
+      void updateMainTreeModelMatrix({ resample: false })
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === '=' || ev.key === '+') {
+      mainScale = Math.min(20, mainScale + stepSmall)
+      void updateMainTreeModelMatrix({ resample: false })
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === 'q' || ev.key === 'Q') {
+      mainHeadingDeg -= stepDeg
+      void updateMainTreeModelMatrix({ resample: false })
+      ev.preventDefault()
+      return
+    }
+    if (ev.key === 'e' || ev.key === 'E') {
+      mainHeadingDeg += stepDeg
+      void updateMainTreeModelMatrix({ resample: false })
+      ev.preventDefault()
+      return
+    }
+  })
+
   // Optional: extra trees (single model instanced at many points from ion GeoJSON)
   const hasExtraTrees = Number.isFinite(env.ionExtraTreesModelAssetId) && env.ionExtraTreesModelAssetId > 0
   const hasExtraTreesGeo = Number.isFinite(env.ionExtraTreesGeojsonAssetId) && env.ionExtraTreesGeojsonAssetId > 0
@@ -804,16 +981,6 @@ async function init() {
 
       // Apply optional ENU offset in meters before sampling heights (fixes systematic drift).
       // Also applies per-tree ENU offsets (for manual fine-tuning).
-      const shiftLonLatByEnu = (lon: number, lat: number, eM: number, nM: number) => {
-        if (eM === 0 && nM === 0) return { lon, lat }
-        const base = Cartesian3.fromDegrees(lon, lat, 0)
-        const enu = Transforms.eastNorthUpToFixedFrame(base)
-        const shifted = Matrix4.multiplyByPoint(enu, new Cartesian3(eM, nM, 0), new Cartesian3())
-        const carto = viewer.scene.globe.ellipsoid.cartesianToCartographic(shifted)
-        if (!carto) return { lon, lat }
-        return { lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) }
-      }
-
       const computeShiftedPts = (globalE: number, globalN: number) => {
         const out: Array<{ lon: number; lat: number }> = []
         for (let i = 0; i < usePts.length; i++) {
