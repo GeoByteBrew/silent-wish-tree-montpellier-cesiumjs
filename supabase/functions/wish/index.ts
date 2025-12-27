@@ -62,7 +62,14 @@ serve(async (req) => {
       .select('id', { count: 'exact', head: true })
       .eq('client_id', client_id)
       .gte('created_at', since)
-    if ((count ?? 0) >= rateLimitPerHour) return json({ error: 'rate_limited' }, { status: 429 })
+    if ((count ?? 0) >= rateLimitPerHour)
+      return json(
+        {
+          error: 'rate_limited',
+          detail: `per_hour=${rateLimitPerHour} count_last_hour=${count ?? 0}`,
+        },
+        { status: 429 },
+      )
   }
 
   const mod = moderateWish(text)

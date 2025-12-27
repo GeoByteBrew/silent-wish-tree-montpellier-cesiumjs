@@ -434,6 +434,9 @@ async function init() {
             <button class="primary" id="hangBtn"></button>
           </div>
           <div class="row">
+            <button class="ghost" id="newSessionBtn" type="button">New session</button>
+          </div>
+          <div class="row">
             <button class="secondary" id="downloadBtn" disabled></button>
           </div>
           <div id="status" class="status muted"></div>
@@ -1688,6 +1691,7 @@ async function init() {
   const hangBtn = $('#hangBtn') as HTMLButtonElement
   const downloadBtn = $('#downloadBtn') as HTMLButtonElement
   const wishInput = $('#wishInput') as HTMLTextAreaElement
+  const newSessionBtn = $('#newSessionBtn') as HTMLButtonElement
 
   if (env.turnstileSiteKey) {
     await injectTurnstileScript()
@@ -1702,6 +1706,14 @@ async function init() {
     })
   } else {
     setStatus('Missing VITE_TURNSTILE_SITE_KEY (captcha disabled)')
+  }
+
+  // Test helper: reset client_id to bypass rate limit during iteration.
+  newSessionBtn.onclick = () => {
+    if (!confirm('Reset session id for this browser? (Helps bypass rate limit while testing.)')) return
+    localStorage.removeItem('silentwish_client_id')
+    setStatus('Session reset. Reloading…')
+    location.reload()
   }
 
   // Optional: click tree to refocus
