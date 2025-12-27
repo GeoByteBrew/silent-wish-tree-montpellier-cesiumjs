@@ -456,6 +456,7 @@ async function init() {
           <div class="row">
             <button class="secondary" id="exportLayoutBtn" type="button">Export</button>
             <button class="secondary" id="importLayoutBtn" type="button">Import</button>
+            <button class="secondary" id="loadDefaultLayoutBtn" type="button">Default</button>
             <button class="ghost" id="resetLayoutBtn" type="button">Reset</button>
           </div>
           <div class="muted" style="font-size:12px;margin-top:8px">
@@ -569,6 +570,25 @@ async function init() {
     localStorage.removeItem(LAYOUT_FLAG)
   }
 
+  async function loadDefaultLayout(): Promise<LayoutV1 | null> {
+    try {
+      const r = await fetch(DEFAULT_LAYOUT_URL, { cache: 'no-store' })
+      if (!r.ok) {
+        setStatus(`Default layout fetch failed (HTTP ${r.status}).`)
+        return null
+      }
+      const j = (await r.json()) as LayoutV1
+      if (j?.version !== 1) {
+        setStatus('Default layout invalid (wrong version).')
+        return null
+      }
+      return j
+    } catch (e) {
+      setStatus(`Default layout fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+      return null
+    }
+  }
+
   function hasAnyLocalTweaks(): boolean {
     const keysToCheck = [
       ...Object.values(mainKey),
@@ -598,10 +618,8 @@ async function init() {
       return
     }
     try {
-      const r = await fetch(DEFAULT_LAYOUT_URL, { cache: 'no-store' })
-      if (!r.ok) return
-      const j = (await r.json()) as LayoutV1
-      if (j?.version !== 1) return
+      const j = await loadDefaultLayout()
+      if (!j) return
       // Backup whatever exists before applying defaults.
       try {
         setStoredJson(BACKUP_KEY, collectLayout())
@@ -609,7 +627,7 @@ async function init() {
         // ignore
       }
       applyLayout(j)
-      setStatus('Default layout applied.')
+      setStatus(`Default layout applied (${j.savedAt}).`)
       // reload to ensure all runtime state picks up the new values
       location.reload()
     } catch {
@@ -645,6 +663,21 @@ async function init() {
     if (!confirm('Reset all local tree tweaks (main + extra)?')) return
     resetLocalLayout()
     setStatus('Local layout reset. Reloading…')
+    location.reload()
+  }
+
+  ;($('#loadDefaultLayoutBtn') as HTMLButtonElement).onclick = async () => {
+    if (!confirm('Apply the shared default layout (overwrites your local tweaks)?')) return
+    const j = await loadDefaultLayout()
+    if (!j) return
+    try {
+      setStoredJson(BACKUP_KEY, collectLayout())
+    } catch {
+      // ignore
+    }
+    resetLocalLayout()
+    applyLayout(j)
+    setStatus(`Default layout applied (${j.savedAt}). Reloading…`)
     location.reload()
   }
 
@@ -1524,6 +1557,26 @@ async function init() {
     })
   }
   const flyToTree = async () => {
+    // Prefer flying to the actual main tree model position (after layout + live edits),
+    // so camera always ends up near the tree even if env camera coords are wrong.
+    try {
+      if (treeModel) {
+        const p = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
+        const carto = Cartographic.fromCartesian(p)
+        if (Number.isFinite(carto.longitude) && Number.isFinite(carto.latitude)) {
+          const lon = CesiumMath.toDegrees(carto.longitude)
+          const lat = CesiumMath.toDegrees(carto.latitude)
+          await viewer.camera.flyTo({
+            destination: Cartesian3.fromDegrees(lon, lat, 120),
+            orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
+            duration: 1.0,
+          })
+          return
+        }
+      }
+    } catch {
+      // fallback below
+    }
     await viewer.camera.flyTo({
       destination: Cartesian3.fromDegrees(camLonDeg, camLatDeg, 120),
       orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
