@@ -1541,9 +1541,10 @@ async function init() {
     const file = orn?.file ?? ornamentId
     const url = `/models/ornaments/${file}.glb`
 
-    // Scale offsets with main tree scale so ornaments still "sit on" the tree after you resize it.
+    // Keep offsets mostly stable. With large tree scales, multiplying offsets linearly can throw ornaments
+    // tens of meters away (hard to spot). Use a gentle, clamped factor instead.
     // Base tuning assumes treeScale≈2.0
-    const scaleFactor = Math.max(0.2, mainScale / 2.0)
+    const scaleFactor = Math.min(1.35, Math.max(0.85, Math.sqrt(mainScale / 2.0)))
     const angle = (anchorIndex % 360) * (Math.PI / 180)
     const radius = (6 + ((anchorIndex % 13) / 13) * 6) * scaleFactor
     const height = (18 + ((anchorIndex % 25) / 25) * 18) * scaleFactor
@@ -1558,7 +1559,14 @@ async function init() {
     const m = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
     const modelMatrix = Matrix4.fromTranslation(m)
     try {
-      const model = await Model.fromGltfAsync({ url, modelMatrix, scale: 1.0 })
+      const model = await Model.fromGltfAsync({
+        url,
+        modelMatrix,
+        scale: 1.0,
+        // Keep ornaments visible even if they're small or the camera is far.
+        minimumPixelSize: 24,
+        maximumScale: 10,
+      })
       viewer.scene.primitives.add(model)
       localOrnaments.push(model)
     } catch (e) {
