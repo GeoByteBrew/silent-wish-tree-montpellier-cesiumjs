@@ -179,15 +179,31 @@ async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Pr
   const ctx = out.getContext('2d')
   if (!ctx) throw new Error('No 2D context')
 
-  ctx.fillStyle = '#000'
+  // --- "Memory frame" ---
+  // paper background
+  ctx.fillStyle = '#0b0f14'
   ctx.fillRect(0, 0, out.width, out.height)
+  // subtle border frame
+  const framePad = Math.max(14, Math.floor(Math.min(w, h) * 0.018))
+  ctx.fillStyle = '#f7f0e6'
+  ctx.fillRect(framePad, framePad, w - framePad * 2, h - framePad * 2)
+  // inner shadow
+  ctx.strokeStyle = 'rgba(0,0,0,0.20)'
+  ctx.lineWidth = 2
+  ctx.strokeRect(framePad + 1, framePad + 1, w - framePad * 2 - 2, h - framePad * 2 - 2)
 
   // draw 3D
-  ctx.drawImage(srcCanvas, 0, 0)
+  ctx.drawImage(srcCanvas, framePad, framePad, w - framePad * 2, h - framePad * 2)
 
   // footer
   ctx.fillStyle = '#0b0f14'
   ctx.fillRect(0, h, w, footerH)
+  // footer top accent line
+  const grad = ctx.createLinearGradient(0, h, w, h)
+  grad.addColorStop(0, 'rgba(103,231,255,0.75)')
+  grad.addColorStop(1, 'rgba(255,196,103,0.65)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, h, w, 3)
 
   ctx.fillStyle = '#ffffff'
   ctx.font = `600 ${Math.max(16, Math.floor(footerH * 0.22))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
@@ -199,6 +215,13 @@ async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Pr
     ctx.fillText(line, pad, y)
     y += lineH
   }
+  // small watermark on the right
+  ctx.globalAlpha = 0.9
+  ctx.font = `500 ${Math.max(12, Math.floor(footerH * 0.16))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+  const wm = 'GeoByteBrew · Montpellier'
+  const tw = ctx.measureText(wm).width
+  ctx.fillText(wm, w - pad - tw, h + pad)
+  ctx.globalAlpha = 1
 
   return out.toDataURL('image/png')
 }
@@ -393,6 +416,11 @@ async function init() {
     <div class="layout">
       <div class="scene">
         <div id="cesium"></div>
+        <div class="loading" id="loadingOverlay" aria-live="polite">
+          <div class="spinner" aria-hidden="true"></div>
+          <div class="loading-title">Loading Montpellier…</div>
+          <div class="loading-sub" id="loadingText">Starting…</div>
+        </div>
         <div class="hud">
           <div class="hud-row">
             <span class="badge" id="totalBadge">…</span>
@@ -450,6 +478,10 @@ async function init() {
             <button class="ghost" id="camCityBtn"></button>
             <button class="ghost" id="camTreeBtn"></button>
           </div>
+          <div class="row">
+            <button class="secondary" id="saveStartViewBtn" type="button">Save start view</button>
+            <button class="ghost" id="resetStartViewBtn" type="button">Reset view</button>
+          </div>
         </div>
 
         <div class="section">
@@ -476,6 +508,13 @@ async function init() {
 
   const t = (k: string) => I18N[lang][k] ?? k
   const status = $('#status') as HTMLDivElement
+  const loadingOverlay = $('#loadingOverlay') as HTMLDivElement
+  const loadingText = $('#loadingText') as HTMLDivElement
+  const setLoading = (on: boolean, msg?: string) => {
+    loadingOverlay.style.display = on ? 'flex' : 'none'
+    if (msg) loadingText.textContent = msg
+  }
+  setLoading(true, 'Preparing 3D scene…')
   const statusLines: string[] = []
   // Keyboard focus: ensure only one editing mode reacts to shared keys.
   let mainTreeSelected = false
@@ -791,11 +830,63 @@ async function init() {
   viewer.scene.globe.show = !has3DTiles
   if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
   viewer.scene.backgroundColor = undefined as any
+  // Realistic day/night lighting + sky
+  viewer.scene.globe.enableLighting = true
+  if (viewer.scene.sun) viewer.scene.sun.show = true
+  if (viewer.scene.moon) viewer.scene.moon.show = true
+
+  // Start view persistence (so you can tune the first impression in-scene)
+  const START_VIEW_KEY = 'silentwish_start_view_v1'
+  type StartView = { lon: number; lat: number; height: number; heading: number; pitch: number; roll: number }
+  const getStartView = (): StartView | null => {
+    try {
+      const raw = localStorage.getItem(START_VIEW_KEY)
+      if (!raw) return null
+      const j = JSON.parse(raw) as Partial<StartView>
+      if (
+        typeof j.lon !== 'number' ||
+        typeof j.lat !== 'number' ||
+        typeof j.height !== 'number' ||
+        typeof j.heading !== 'number' ||
+        typeof j.pitch !== 'number' ||
+        typeof j.roll !== 'number'
+      )
+        return null
+      return j as StartView
+    } catch {
+      return null
+    }
+  }
+  const saveStartView = () => {
+    const carto = viewer.camera.positionCartographic
+    const j: StartView = {
+      lon: CesiumMath.toDegrees(carto.longitude),
+      lat: CesiumMath.toDegrees(carto.latitude),
+      height: carto.height,
+      heading: CesiumMath.toDegrees(viewer.camera.heading),
+      pitch: CesiumMath.toDegrees(viewer.camera.pitch),
+      roll: CesiumMath.toDegrees(viewer.camera.roll),
+    }
+    localStorage.setItem(START_VIEW_KEY, JSON.stringify(j))
+    setStatus(`Start view saved: lon=${j.lon.toFixed(6)} lat=${j.lat.toFixed(6)} h=${j.height.toFixed(1)}m`)
+  }
+  ;($('#saveStartViewBtn') as HTMLButtonElement).onclick = () => saveStartView()
+  ;($('#resetStartViewBtn') as HTMLButtonElement).onclick = () => {
+    localStorage.removeItem(START_VIEW_KEY)
+    setStatus('Start view reset (will use default fly-to).')
+  }
 
   if (has3DTiles) {
     try {
       const tileset = await Cesium3DTileset.fromIonAssetId(env.photorealisticAssetId)
       viewer.scene.primitives.add(tileset)
+      try {
+        setLoading(true, 'Loading photorealistic Montpellier…')
+        const rp = (tileset as any)?.readyPromise
+        if (rp && typeof rp.then === 'function') await rp
+      } catch {
+        // ignore; we'll still proceed
+      }
     } catch (e) {
       // Typical causes: wrong asset id, token missing scopes, token revoked, or value contains quotes.
       viewer.scene.globe.show = true
@@ -1588,7 +1679,23 @@ async function init() {
   }
   ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
   ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToTree()
-  void flyToTree()
+  const flyToStart = async () => {
+    const sv = getStartView()
+    if (sv) {
+      await viewer.camera.flyTo({
+        destination: Cartesian3.fromDegrees(sv.lon, sv.lat, sv.height),
+        orientation: {
+          heading: CesiumMath.toRadians(sv.heading),
+          pitch: CesiumMath.toRadians(sv.pitch),
+          roll: CesiumMath.toRadians(sv.roll),
+        },
+        duration: 0.9,
+      })
+      return
+    }
+    await flyToTree()
+  }
+  void flyToStart()
 
   // Local ornament placement (simple "drop near tree" for MVP)
   const localOrnaments: Model[] = []
@@ -1715,6 +1822,11 @@ async function init() {
     setStatus('Session reset. Reloading…')
     location.reload()
   }
+
+  // Hide loading overlay once the app reached interactive state (tree loaded or failed).
+  // We keep it simple: after first successful fly-to + next frame.
+  // (Photorealistic tiles streaming continues in background.)
+  setTimeout(() => setLoading(false), 1200)
 
   // Optional: click tree to refocus
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
