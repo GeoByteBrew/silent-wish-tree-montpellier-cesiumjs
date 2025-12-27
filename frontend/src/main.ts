@@ -413,6 +413,8 @@ async function init() {
   const t = (k: string) => I18N[lang][k] ?? k
   const status = $('#status') as HTMLDivElement
   const statusLines: string[] = []
+  // Keyboard focus: ensure only one editing mode reacts to shared keys.
+  let mainTreeSelected = false
   const setStatus = (msg: string) => {
     const m = msg.trim()
     if (!m) {
@@ -778,7 +780,6 @@ async function init() {
   let mainGroundTrim = getNumberParam('treeGround') ?? getStoredNumber(mainKey.g) ?? 0
   const baseTreeLon = treeLonDeg
   const baseTreeLat = treeLatDeg
-  let mainSelected = false
   let treeResampleTimer: number | null = null
 
   const shiftBaseTree = () => {
@@ -812,7 +813,7 @@ async function init() {
     setStoredNumber(mainKey.h, mainHeadingDeg)
     setStoredNumber(mainKey.g, mainGroundTrim)
     setStatus(
-      `Main tree${mainSelected ? ' (selected)' : ''}: east=${mainEast.toFixed(1)}m north=${mainNorth.toFixed(
+      `Main tree${mainTreeSelected ? ' (selected)' : ''}: east=${mainEast.toFixed(1)}m north=${mainNorth.toFixed(
         1,
       )}m scale=${mainScale.toFixed(2)} heading=${mainHeadingDeg.toFixed(1)}° groundTrim=${mainGroundTrim.toFixed(2)}m${
         opts.resample ? ' (resampled)' : ''
@@ -838,7 +839,7 @@ async function init() {
       const picked = viewer.scene.pick(movement.position)
       const prim = (picked as any)?.primitive
       if (prim === treeModel) {
-        mainSelected = !mainSelected
+        mainTreeSelected = !mainTreeSelected
         void updateMainTreeModelMatrix({ resample: false })
       }
     }, ScreenSpaceEventType.LEFT_CLICK)
@@ -851,7 +852,7 @@ async function init() {
   // - Q / E : heading rotate left/right (shift=15°, alt=1°)
   // - G : force resample
   window.addEventListener('keydown', (ev) => {
-    if (!mainSelected) return
+    if (!mainTreeSelected) return
     const step = ev.shiftKey ? 5 : ev.altKey ? 0.2 : 1
     const stepSmall = ev.shiftKey ? 0.1 : 0.05
     const stepDeg = ev.shiftKey ? 15 : ev.altKey ? 1 : 5
@@ -1127,27 +1128,16 @@ async function init() {
       }
 
       window.addEventListener('keydown', (ev) => {
+        // If main tree is in edit mode, ignore extra-trees hotkeys to avoid conflicts.
+        if (mainTreeSelected) return
+
         if (ev.key === 'g' || ev.key === 'G') {
           void renderExtraTrees(offEast, offNorth, { resample: true })
           ev.preventDefault()
           return
         }
 
-        // Scale tuning
-        if (ev.key === '-' || ev.key === '_') {
-          extraScale = Math.max(0.05, extraScale - (ev.shiftKey ? 0.1 : 0.05))
-          void renderExtraTrees(offEast, offNorth, { resample: false })
-          ev.preventDefault()
-          return
-        }
-        if (ev.key === '=' || ev.key === '+') {
-          extraScale = Math.min(10, extraScale + (ev.shiftKey ? 0.1 : 0.05))
-          void renderExtraTrees(offEast, offNorth, { resample: false })
-          ev.preventDefault()
-          return
-        }
-
-        // Per-tree scale tuning
+        // Per-tree scale tuning (selected only)
         if ((ev.key === ',' || ev.key === '<') && selectedTreeIdx != null) {
           const step = ev.shiftKey ? 0.1 : 0.05
           const k = String(selectedTreeIdx)
@@ -1175,6 +1165,20 @@ async function init() {
             const dz = (perTreeDeltas[k] ?? 0) + (cur - next) * modelRadiusM
             perTreeDeltas[k] = dz
           }
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+
+        // Global extra-trees scale tuning (only when no tree is selected)
+        if ((ev.key === ',' || ev.key === '<') && selectedTreeIdx == null) {
+          extraScale = Math.max(0.05, extraScale - (ev.shiftKey ? 0.1 : 0.05))
+          void renderExtraTrees(offEast, offNorth, { resample: false })
+          ev.preventDefault()
+          return
+        }
+        if ((ev.key === '.' || ev.key === '>') && selectedTreeIdx == null) {
+          extraScale = Math.min(10, extraScale + (ev.shiftKey ? 0.1 : 0.05))
           void renderExtraTrees(offEast, offNorth, { resample: false })
           ev.preventDefault()
           return
