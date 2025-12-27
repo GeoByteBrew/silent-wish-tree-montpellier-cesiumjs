@@ -1621,8 +1621,9 @@ async function init() {
 
     const H = 1.7 * r
     const Rb = 0.55 * r
-    // Avoid very bottom/top (keeps ornaments on visible canopy)
-    const z = (0.18 + v * 0.74) * H
+    // Avoid very bottom/top (keeps ornaments on visible canopy).
+    // IMPORTANT: keep Z always positive relative to the model origin (often at tree base).
+    const z = (0.22 + v * 0.68) * H
     const t = z / H // 0..1
     // Cone-ish taper with a bit of curve (more natural canopy)
     const rr = Math.max(0.6, Rb * Math.pow(1 - t, 0.75))
@@ -1637,7 +1638,8 @@ async function init() {
 
     const enu = Transforms.eastNorthUpToFixedFrame(origin)
     // Offset is expressed in local ENU meters: (east, north, up)
-    const offset = new Cartesian3(dx, dy, -0.9 * r + z)
+    // Keep 'up' positive so ornaments can't end up under the ground / inside the trunk base.
+    const offset = new Cartesian3(dx, dy, z)
     const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
     const modelMatrix = Matrix4.fromTranslation(pos)
     try {
@@ -1651,6 +1653,7 @@ async function init() {
       })
       viewer.scene.primitives.add(model)
       localOrnaments.push(model)
+      setStatus(`Ornament placed: ${file}.glb (dx=${dx.toFixed(2)}m dy=${dy.toFixed(2)}m z=${z.toFixed(2)}m)`)
     } catch (e) {
       setStatus(`Failed to load ornament model: ${file}.glb (${e instanceof Error ? e.message : String(e)})`)
     }
