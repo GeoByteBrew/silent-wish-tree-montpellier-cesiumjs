@@ -1154,8 +1154,10 @@ async function init() {
       }
 
       window.addEventListener('keydown', (ev) => {
-        // If main tree is in edit mode, ignore extra-trees hotkeys to avoid conflicts.
-        if (mainTreeSelected) return
+        // If main tree is in edit mode, ignore extra-trees hotkeys to avoid conflicts
+        // BUT keep arrow-keys enabled so you can move all extra trees even while editing the main tree (WASD/QE).
+        const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)
+        if (mainTreeSelected && !isArrow) return
 
         // Reset extra trees edits (safety: requires Shift+R)
         if ((ev.key === 'r' || ev.key === 'R') && ev.shiftKey) {
