@@ -335,6 +335,47 @@ function setStoredJson(key: string, v: unknown) {
   localStorage.setItem(key, JSON.stringify(v))
 }
 
+type LayoutV1 = {
+  version: 1
+  savedAt: string
+  mainTree?: {
+    eastM: number
+    northM: number
+    scale: number
+    headingDeg: number
+    groundTrimM: number
+  }
+  extraTrees?: {
+    globals: {
+      eastM: number
+      northM: number
+      scale: number
+      groundTrimM: number
+    }
+    perTree: {
+      dz: Record<string, number>
+      scaleMult: Record<string, number>
+      xy: Record<string, { e: number; n: number }>
+    }
+  }
+}
+
+function safeNumber(n: unknown, fallback = 0): number {
+  return typeof n === 'number' && Number.isFinite(n) ? n : fallback
+}
+
+function downloadText(filename: string, text: string) {
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 async function init() {
   let lang: Lang = (localStorage.getItem('lang') as Lang) || 'fr'
   let selectedOrnament: OrnamentId = 'star'
@@ -403,6 +444,20 @@ async function init() {
           </div>
         </div>
 
+        <div class="section">
+          <div class="label-row">
+            <div class="label">Layout</div>
+          </div>
+          <div class="row">
+            <button class="secondary" id="exportLayoutBtn" type="button">Export</button>
+            <button class="secondary" id="importLayoutBtn" type="button">Import</button>
+            <button class="ghost" id="resetLayoutBtn" type="button">Reset</button>
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:8px">
+            Export creates a JSON of your current tweaks. Import applies it. Reset clears local tweaks.
+          </div>
+        </div>
+
         <div class="footer muted">
           No account · No email · Individual wishes are never displayed
     </div>
@@ -427,6 +482,138 @@ async function init() {
     while (statusLines.length > 6) statusLines.shift()
     status.textContent = statusLines.join('\n')
   }
+
+  // --- Layout persistence helpers ---
+  const LAYOUT_FLAG = 'silentwish_user_layout'
+  const DEFAULT_LAYOUT_URL = '/layout/default-layout.json'
+
+  const mainKey = {
+    e: 'silentwish_mainTreeEastM',
+    n: 'silentwish_mainTreeNorthM',
+    s: 'silentwish_mainTreeScale',
+    h: 'silentwish_mainTreeHeadingDeg',
+    g: 'silentwish_mainTreeGroundTrimM',
+  }
+
+  const extraKeys = {
+    east: 'silentwish_extraEastM',
+    north: 'silentwish_extraNorthM',
+    scale: 'silentwish_extraScale',
+    ground: 'silentwish_extraGroundM',
+    dz: 'silentwish_extraTreeDeltas',
+    scaleMult: 'silentwish_extraTreeScale',
+    xy: 'silentwish_extraTreeXY',
+  }
+
+  function collectLayout(): LayoutV1 {
+    const layout: LayoutV1 = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      mainTree: {
+        eastM: getStoredNumber(mainKey.e) ?? 0,
+        northM: getStoredNumber(mainKey.n) ?? 0,
+        scale: getStoredNumber(mainKey.s) ?? 2,
+        headingDeg: getStoredNumber(mainKey.h) ?? 0,
+        groundTrimM: getStoredNumber(mainKey.g) ?? 0,
+      },
+      extraTrees: {
+        globals: {
+          eastM: getStoredNumber(extraKeys.east) ?? 0,
+          northM: getStoredNumber(extraKeys.north) ?? 0,
+          scale: getStoredNumber(extraKeys.scale) ?? 1,
+          groundTrimM: getStoredNumber(extraKeys.ground) ?? 0,
+        },
+        perTree: {
+          dz: getStoredJson(extraKeys.dz, {}),
+          scaleMult: getStoredJson(extraKeys.scaleMult, {}),
+          xy: getStoredJson(extraKeys.xy, {}),
+        },
+      },
+    }
+    return layout
+  }
+
+  function applyLayout(layout: LayoutV1) {
+    if (!layout || layout.version !== 1) throw new Error('Unsupported layout version')
+
+    if (layout.mainTree) {
+      setStoredNumber(mainKey.e, safeNumber(layout.mainTree.eastM))
+      setStoredNumber(mainKey.n, safeNumber(layout.mainTree.northM))
+      setStoredNumber(mainKey.s, safeNumber(layout.mainTree.scale, 2))
+      setStoredNumber(mainKey.h, safeNumber(layout.mainTree.headingDeg))
+      setStoredNumber(mainKey.g, safeNumber(layout.mainTree.groundTrimM))
+    }
+
+    if (layout.extraTrees) {
+      setStoredNumber(extraKeys.east, safeNumber(layout.extraTrees.globals.eastM))
+      setStoredNumber(extraKeys.north, safeNumber(layout.extraTrees.globals.northM))
+      setStoredNumber(extraKeys.scale, safeNumber(layout.extraTrees.globals.scale, 1))
+      setStoredNumber(extraKeys.ground, safeNumber(layout.extraTrees.globals.groundTrimM))
+      setStoredJson(extraKeys.dz, layout.extraTrees.perTree.dz ?? {})
+      setStoredJson(extraKeys.scaleMult, layout.extraTrees.perTree.scaleMult ?? {})
+      setStoredJson(extraKeys.xy, layout.extraTrees.perTree.xy ?? {})
+    }
+
+    localStorage.setItem(LAYOUT_FLAG, '1')
+  }
+
+  function resetLocalLayout() {
+    for (const k of Object.values(mainKey)) localStorage.removeItem(k)
+    for (const k of Object.values(extraKeys)) localStorage.removeItem(k)
+    localStorage.removeItem(LAYOUT_FLAG)
+  }
+
+  async function maybeApplyDefaultLayout() {
+    const force = new URLSearchParams(window.location.search).get('layout') === 'default'
+    const hasUser = localStorage.getItem(LAYOUT_FLAG) === '1'
+    if (hasUser && !force) return
+    try {
+      const r = await fetch(DEFAULT_LAYOUT_URL, { cache: 'no-store' })
+      if (!r.ok) return
+      const j = (await r.json()) as LayoutV1
+      if (j?.version !== 1) return
+      applyLayout(j)
+      setStatus('Default layout applied.')
+      // reload to ensure all runtime state picks up the new values
+      location.reload()
+    } catch {
+      // ignore
+    }
+  }
+
+  // Wire buttons
+  ;($('#exportLayoutBtn') as HTMLButtonElement).onclick = async () => {
+    const layout = collectLayout()
+    const json = JSON.stringify(layout, null, 2)
+    try {
+      await navigator.clipboard.writeText(json)
+      setStatus('Layout copied to clipboard and downloaded.')
+    } catch {
+      setStatus('Layout downloaded (clipboard unavailable).')
+    }
+    downloadText('silent-wish-layout.json', json)
+  }
+  ;($('#importLayoutBtn') as HTMLButtonElement).onclick = async () => {
+    const txt = prompt('Paste layout JSON here:')
+    if (!txt) return
+    try {
+      const j = JSON.parse(txt) as LayoutV1
+      applyLayout(j)
+      setStatus('Layout imported. Reloading…')
+      location.reload()
+    } catch (e) {
+      setStatus(`Import failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  ;($('#resetLayoutBtn') as HTMLButtonElement).onclick = async () => {
+    if (!confirm('Reset all local tree tweaks (main + extra)?')) return
+    resetLocalLayout()
+    setStatus('Local layout reset. Reloading…')
+    location.reload()
+  }
+
+  // Apply default layout if present and user layout not set (or ?layout=default)
+  await maybeApplyDefaultLayout()
 
   const renderTexts = () => {
     $('#title').textContent = t('title')
@@ -766,13 +953,6 @@ async function init() {
 
   // ---- Main tree live edit (XY/scale/heading/ground trim) ----
   // Stored locally (per device) so you can fine-tune placement without redeploy loops.
-  const mainKey = {
-    e: 'silentwish_mainTreeEastM',
-    n: 'silentwish_mainTreeNorthM',
-    s: 'silentwish_mainTreeScale',
-    h: 'silentwish_mainTreeHeadingDeg',
-    g: 'silentwish_mainTreeGroundTrimM',
-  }
   let mainEast = getNumberParam('treeEast') ?? getStoredNumber(mainKey.e) ?? 0
   let mainNorth = getNumberParam('treeNorth') ?? getStoredNumber(mainKey.n) ?? 0
   let mainScale = getNumberParam('treeScale') ?? getStoredNumber(mainKey.s) ?? treeScale

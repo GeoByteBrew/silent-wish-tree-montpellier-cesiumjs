@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "savedAt": "REPLACE_ME_AFTER_EXPORT",
+  "mainTree": {
+    "eastM": 0,
+    "northM": 0,
+    "scale": 2,
+    "headingDeg": 0,
+    "groundTrimM": 0
+  },
+  "extraTrees": {
+    "globals": {
+      "eastM": 0,
+      "northM": 0,
+      "scale": 1,
+      "groundTrimM": 0
+    },
+    "perTree": {
+      "dz": {},
+      "scaleMult": {},
+      "xy": {}
+    }
+  }
+}
+
+
