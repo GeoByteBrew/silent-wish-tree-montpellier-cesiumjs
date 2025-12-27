@@ -95,11 +95,16 @@ const env = {
 }
 
 const ORNAMENTS = [
-  { id: 'star', label: { fr: 'Étoile', en: 'Star' } },
-  { id: 'ball_red', label: { fr: 'Boule rouge', en: 'Red ball' } },
-  { id: 'ball_gold', label: { fr: 'Boule dorée', en: 'Gold ball' } },
-  { id: 'bell', label: { fr: 'Cloche', en: 'Bell' } },
-  { id: 'candy', label: { fr: 'Sucre d’orge', en: 'Candy cane' } },
+  { id: 'star', file: 'star', label: { fr: 'Étoile', en: 'Star' } },
+  { id: 'red_ball', file: 'red_ball', label: { fr: 'Boule rouge', en: 'Red ball' } },
+  { id: 'gold_ball', file: 'gold_ball', label: { fr: 'Boule dorée', en: 'Gold ball' } },
+  { id: 'silver_ball', file: 'silver_ball', label: { fr: 'Boule argentée', en: 'Silver ball' } },
+  { id: 'blue_ball', file: 'blue_ball', label: { fr: 'Boule bleue', en: 'Blue ball' } },
+  { id: 'red_silver_ball', file: 'red_silver_ball', label: { fr: 'Boule rouge/argent', en: 'Red/silver ball' } },
+  { id: 'blue_ball_snw', file: 'blue_ball_snw', label: { fr: 'Boule bleue (neige)', en: 'Blue ball (snow)' } },
+  { id: 'heart', file: 'heart', label: { fr: 'Cœur', en: 'Heart' } },
+  { id: 'snow', file: 'snow', label: { fr: 'Flocon', en: 'Snowflake' } },
+  { id: 'tree_petit', file: 'tree_petit', label: { fr: 'Petit sapin', en: 'Small tree' } },
 ] as const
 
 type OrnamentId = (typeof ORNAMENTS)[number]['id']
@@ -1532,16 +1537,23 @@ async function init() {
   // Local ornament placement (simple "drop near tree" for MVP)
   const localOrnaments: Model[] = []
   async function placeLocalOrnament(anchorIndex: number, ornamentId: OrnamentId) {
-    const url = `/models/ornaments/${ornamentId}.glb`
+    const orn = ORNAMENTS.find((o) => o.id === ornamentId)
+    const file = orn?.file ?? ornamentId
+    const url = `/models/ornaments/${file}.glb`
+
+    // Scale offsets with main tree scale so ornaments still "sit on" the tree after you resize it.
+    // Base tuning assumes treeScale≈2.0
+    const scaleFactor = Math.max(0.2, mainScale / 2.0)
     const angle = (anchorIndex % 360) * (Math.PI / 180)
-    const radius = 6 + ((anchorIndex % 13) / 13) * 6
-    const height = 18 + ((anchorIndex % 25) / 25) * 18
+    const radius = (6 + ((anchorIndex % 13) / 13) * 6) * scaleFactor
+    const height = (18 + ((anchorIndex % 25) / 25) * 18) * scaleFactor
 
     const east = radius * Math.cos(angle)
     const north = radius * Math.sin(angle)
 
-    // Approximate ENU offset around treePosition (good enough for "local feeling")
-    const enu = Transforms.eastNorthUpToFixedFrame(treePosition)
+    // Approximate ENU offset around current tree position (good enough for "local feeling")
+    const origin = treeModel ? Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3()) : treePosition
+    const enu = Transforms.eastNorthUpToFixedFrame(origin)
     const offset = new Cartesian3(east, north, height)
     const m = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
     const modelMatrix = Matrix4.fromTranslation(m)
@@ -1549,8 +1561,8 @@ async function init() {
       const model = await Model.fromGltfAsync({ url, modelMatrix, scale: 1.0 })
       viewer.scene.primitives.add(model)
       localOrnaments.push(model)
-    } catch {
-      // fallback: no model available yet
+    } catch (e) {
+      setStatus(`Failed to load ornament model: ${file}.glb (${e instanceof Error ? e.message : String(e)})`)
     }
   }
 
