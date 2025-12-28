@@ -12,6 +12,7 @@ import {
   Matrix4,
   BillboardCollection,
   Model,
+  Quaternion,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   Transforms,
@@ -472,6 +473,89 @@ function downloadText(filename: string, text: string) {
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+// ---- GLB anchor helpers (read Orn.* / Light.* empties exported from Blender) ----
+type GltfV2 = {
+  scene?: number
+  scenes?: Array<{ nodes?: number[] }>
+  nodes?: Array<{
+    name?: string
+    children?: number[]
+    matrix?: number[]
+    translation?: number[]
+    rotation?: number[]
+    scale?: number[]
+  }>
+}
+
+function matrixFromGltfNode(node: NonNullable<GltfV2['nodes']>[number]): Matrix4 {
+  if (node.matrix && node.matrix.length === 16) {
+    // glTF matrices are column-major, same as Cesium Matrix4 array layout.
+    return Matrix4.fromArray(node.matrix as number[], 0, new Matrix4())
+  }
+  const t = node.translation?.length === 3 ? new Cartesian3(node.translation[0], node.translation[1], node.translation[2]) : Cartesian3.ZERO
+  const r =
+    node.rotation?.length === 4
+      ? new Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3])
+      : Quaternion.IDENTITY
+  const s = node.scale?.length === 3 ? new Cartesian3(node.scale[0], node.scale[1], node.scale[2]) : new Cartesian3(1, 1, 1)
+  return Matrix4.fromTranslationQuaternionRotationScale(t, r, s, new Matrix4())
+}
+
+async function fetchGltfJsonFromGlb(glbUrl: string): Promise<GltfV2> {
+  const res = await fetch(glbUrl, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const buf = await res.arrayBuffer()
+  const dv = new DataView(buf)
+  // GLB header: magic(4) version(4) length(4)
+  const magic = dv.getUint32(0, true)
+  // 0x46546C67 == 'glTF'
+  if (magic !== 0x46546c67) throw new Error('Not a GLB (bad magic)')
+  let off = 12
+  while (off + 8 <= dv.byteLength) {
+    const chunkLen = dv.getUint32(off, true)
+    const chunkType = dv.getUint32(off + 4, true)
+    off += 8
+    if (off + chunkLen > dv.byteLength) break
+    // JSON chunk type: 0x4E4F534A == 'JSON'
+    if (chunkType === 0x4e4f534a) {
+      const bytes = new Uint8Array(buf, off, chunkLen)
+      const text = new TextDecoder('utf-8').decode(bytes)
+      return JSON.parse(text) as GltfV2
+    }
+    off += chunkLen
+  }
+  throw new Error('GLB JSON chunk not found')
+}
+
+async function loadAnchorMatrices(glbUrl: string, prefix: string): Promise<Array<{ name: string; matrix: Matrix4 }>> {
+  const gltf = await fetchGltfJsonFromGlb(glbUrl)
+  const nodes = gltf.nodes ?? []
+  if (!nodes.length) return []
+
+  const sceneIndex = typeof gltf.scene === 'number' ? gltf.scene : 0
+  const roots = gltf.scenes?.[sceneIndex]?.nodes ?? []
+  const results: Array<{ name: string; matrix: Matrix4 }> = []
+
+  const walk = (idx: number, parent: Matrix4) => {
+    const n = nodes[idx]
+    if (!n) return
+    const local = matrixFromGltfNode(n)
+    const world = Matrix4.multiply(parent, local, new Matrix4())
+    if (n.name && n.name.startsWith(prefix)) {
+      results.push({ name: n.name, matrix: world })
+    }
+    const kids = n.children ?? []
+    for (const k of kids) walk(k, world)
+  }
+
+  const I = Matrix4.IDENTITY
+  for (const r of roots) walk(r, I)
+
+  // Stable ordering: Orn.0000... so modulo mapping stays consistent.
+  results.sort((a, b) => a.name.localeCompare(b.name, 'en'))
+  return results
 }
 
 async function init() {
@@ -1080,7 +1164,8 @@ async function init() {
   // Tree (placeholder: you will drop models into /public/models/)
   const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
   const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
-  const treeUrl = '/models/tree.glb'
+  // Prefer the newer anchored tree model if present, but keep backwards-compatible fallbacks.
+  const treeUrlCandidates = ['/models/tree2.glb', '/models/tree2.gml', '/models/tree.glb']
 
   // Default: L’Écusson, 34000 Montpellier
   let treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136111111111 // 43°36'40.9"N
@@ -1271,21 +1356,55 @@ async function init() {
   )
 
   let treeModel: Model | null = null
+  let loadedTreeUrl: string | null = null
   try {
     treeModel = await Model.fromGltfAsync({
-      url: hasIonTree ? await IonResource.fromAssetId(env.ionTreeAssetId) : treeUrl,
+      url: hasIonTree ? await IonResource.fromAssetId(env.ionTreeAssetId) : treeUrlCandidates[0],
       modelMatrix: treeModelMatrix,
       scale: 1.0,
     })
     viewer.scene.primitives.add(treeModel)
+    if (!hasIonTree) loadedTreeUrl = treeUrlCandidates[0]
   } catch (e) {
-    setStatus(
-      `Failed to load tree model. ${
-        hasIonTree ? `Check VITE_ION_TREE_ASSET_ID (${env.ionTreeAssetId}).` : `Check that ${treeUrl} exists and is a valid GLB.`
-      } Details: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    )
+    if (!hasIonTree) {
+      // Try fallbacks (tree2.gml, then tree.glb)
+      for (let i = 1; i < treeUrlCandidates.length; i++) {
+        try {
+          treeModel = await Model.fromGltfAsync({
+            url: treeUrlCandidates[i],
+            modelMatrix: treeModelMatrix,
+            scale: 1.0,
+          })
+          viewer.scene.primitives.add(treeModel)
+          setStatus(`Loaded tree model: ${treeUrlCandidates[i]}`)
+          loadedTreeUrl = treeUrlCandidates[i]
+          break
+        } catch {
+          // try next
+        }
+      }
+    }
+    if (!treeModel) {
+      setStatus(
+        `Failed to load tree model. ${
+          hasIonTree
+            ? `Check VITE_ION_TREE_ASSET_ID (${env.ionTreeAssetId}).`
+            : `Tried ${treeUrlCandidates.join(', ')}. Ensure the file exists in frontend/public/models/ and is a valid GLB.`
+        } Details: ${e instanceof Error ? e.message : String(e)}`,
+      )
+    }
+  }
+
+  // Load Orn.* anchors from the tree model (if available). This makes ornaments land exactly where you placed them in Blender.
+  let ornAnchors: Array<{ name: string; matrix: Matrix4 }> = []
+  if (treeModel && loadedTreeUrl && loadedTreeUrl.endsWith('.glb')) {
+    try {
+      ornAnchors = await loadAnchorMatrices(loadedTreeUrl, 'Orn.')
+      if (ornAnchors.length) setStatus(`Loaded ${ornAnchors.length} ornament anchors from ${loadedTreeUrl}.`)
+      else setStatus(`No Orn.* anchors found in ${loadedTreeUrl}.`)
+    } catch (e) {
+      setStatus(`Failed to read anchors from ${loadedTreeUrl}: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   // ---- Main tree live edit (XY/scale/heading/ground trim) ----
@@ -1855,55 +1974,25 @@ async function init() {
     const file = orn?.file ?? ornamentId
     const url = `/models/ornaments/${file}.glb`
 
-    // Deterministic anchor points on a cone surface around the tree to avoid ornaments ending up
-    // inside the model or floating far away. This is a lightweight proxy for real mesh anchors.
-    //
-    // We build a local ENU frame around the model's bounding sphere center and approximate:
-    // - base point = center - up * (0.9 * radius)
-    // - cone height H ≈ 1.7 * radius
-    // - base radius Rb ≈ 0.55 * radius
-    // Then we choose a point on the cone surface using two pseudo-random values derived from anchorIndex.
-    const bs = treeModel?.boundingSphere
-    const bsR = bs?.radius
-    // Always anchor to the actual tree model position in world coordinates.
-    // (Some Cesium primitives expose boundingSphere.center in local/model space.)
-    const origin = treeModel ? Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3()) : treePosition
-    const rRaw = Number.isFinite(bsR) && (bsR as number) > 0 ? (bsR as number) : 12
-    // Clamp effective radius so ornaments can't end up 50–200m up if bounds are large.
-    const r = Math.min(25, Math.max(8, rRaw))
-
-    // Simple deterministic PRNG from anchorIndex (0..1)
-    const prng = (seed: number) => {
-      const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
-      return x - Math.floor(x)
+    // If Orn.* anchors exist in the tree GLB, use them (exact placement).
+    // Otherwise, fall back to the previous procedural placement.
+    let modelMatrix: Matrix4 | null = null
+    if (treeModel && ornAnchors.length) {
+      const a = ornAnchors[anchorIndex % ornAnchors.length]
+      modelMatrix = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
+    } else if (treeModel) {
+      // Fallback: drop near tree (kept as backup)
+      const origin = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
+      const enu = Transforms.eastNorthUpToFixedFrame(origin)
+      const angle = (anchorIndex % 360) * (Math.PI / 180)
+      const radius = 4 + ((anchorIndex % 13) / 13) * 4
+      const height = 10 + ((anchorIndex % 25) / 25) * 14
+      const offset = new Cartesian3(radius * Math.cos(angle), radius * Math.sin(angle), height)
+      const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
+      modelMatrix = Matrix4.fromTranslation(pos)
     }
-    const u = prng(anchorIndex + 1) // angle
-    const v = prng(anchorIndex + 2) // height
-
-    const H = 1.7 * r
-    const Rb = 0.55 * r
-    // Avoid very bottom/top (keeps ornaments on visible canopy).
-    // IMPORTANT: keep Z always positive relative to the model origin (often at tree base).
-    const z = (0.22 + v * 0.68) * H
-    const t = z / H // 0..1
-    // Cone-ish taper with a bit of curve (more natural canopy)
-    const rr = Math.max(0.6, Rb * Math.pow(1 - t, 0.75))
-    const ang = u * Math.PI * 2
-    let dx = rr * Math.cos(ang)
-    let dy = rr * Math.sin(ang)
-    // Push outward a bit so we don't clip into the mesh
-    const len = Math.max(1e-6, Math.hypot(dx, dy))
-    const push = 0.35 + 0.15 * prng(anchorIndex + 3)
-    dx += (dx / len) * push
-    dy += (dy / len) * push
-
-    const enu = Transforms.eastNorthUpToFixedFrame(origin)
-    // Offset is expressed in local ENU meters: (east, north, up)
-    // Keep 'up' positive so ornaments can't end up under the ground / inside the trunk base.
-    const offset = new Cartesian3(dx, dy, z)
-    const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
-    const modelMatrix = Matrix4.fromTranslation(pos)
     try {
+      if (!modelMatrix) return
       const model = await Model.fromGltfAsync({
         url,
         modelMatrix,
@@ -1914,7 +2003,6 @@ async function init() {
       })
       viewer.scene.primitives.add(model)
       localOrnaments.push(model)
-      setStatus(`Ornament placed: ${file}.glb (dx=${dx.toFixed(2)}m dy=${dy.toFixed(2)}m z=${z.toFixed(2)}m)`)
     } catch (e) {
       setStatus(`Failed to load ornament model: ${file}.glb (${e instanceof Error ? e.message : String(e)})`)
     }
