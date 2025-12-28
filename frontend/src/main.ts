@@ -3,12 +3,14 @@ import {
   Cartesian3,
   Cartographic,
   Cesium3DTileset,
+  Color,
   HeadingPitchRoll,
   Ion,
   IonImageryProvider,
   IonResource,
   Math as CesiumMath,
   Matrix4,
+  BillboardCollection,
   Model,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -493,7 +495,10 @@ async function init() {
           <div class="hud-row">
             <span class="badge" id="totalBadge">…</span>
             <button class="ghost" id="revealBtn"></button>
-    </div>
+          </div>
+        </div>
+        <div class="credits" id="credits">
+          3D: Google Photorealistic 3D Tiles via Cesium ion · Powered by CesiumJS
         </div>
       </div>
       <aside class="panel">
@@ -1139,6 +1144,84 @@ async function init() {
     camLatDeg = treeLatDeg
     camLonDeg = treeLonDeg
     setStatus('Camera coordinates invalid; falling back to tree location.')
+  }
+
+  // --- Lightweight clouds (Cesium-only) ---
+  // We render a few subtle cloud billboards around the camera focus area.
+  // No external assets required (we generate the sprite via canvas).
+  const makeCloudDataUrl = (size = 256) => {
+    const c = document.createElement('canvas')
+    c.width = size
+    c.height = size
+    const ctx = c.getContext('2d')
+    if (!ctx) return ''
+    ctx.clearRect(0, 0, size, size)
+    const blobs = [
+      { x: 0.36, y: 0.55, r: 0.22 },
+      { x: 0.52, y: 0.48, r: 0.28 },
+      { x: 0.68, y: 0.58, r: 0.20 },
+      { x: 0.50, y: 0.64, r: 0.26 },
+    ]
+    for (const b of blobs) {
+      const x = b.x * size
+      const y = b.y * size
+      const r = b.r * size
+      const g = ctx.createRadialGradient(x, y, r * 0.25, x, y, r)
+      g.addColorStop(0, 'rgba(255,255,255,0.95)')
+      g.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = g
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    // Fade edges
+    ctx.globalCompositeOperation = 'destination-in'
+    const fade = ctx.createRadialGradient(size * 0.5, size * 0.58, size * 0.2, size * 0.5, size * 0.58, size * 0.56)
+    fade.addColorStop(0, 'rgba(255,255,255,0.95)')
+    fade.addColorStop(1, 'rgba(255,255,255,0.0)')
+    ctx.fillStyle = fade
+    ctx.fillRect(0, 0, size, size)
+    ctx.globalCompositeOperation = 'source-over'
+    return c.toDataURL('image/png')
+  }
+
+  const cloudImg = makeCloudDataUrl(256)
+  if (cloudImg) {
+    const cloudCollection = new BillboardCollection()
+    viewer.scene.primitives.add(cloudCollection)
+    const center = Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0)
+    const enu = Transforms.eastNorthUpToFixedFrame(center)
+    const state: Array<{ e: number; n: number; z: number; speed: number; wobble: number }> = []
+    const count = 10
+    for (let i = 0; i < count; i++) {
+      const e = (Math.random() * 2 - 1) * 420
+      const n = (Math.random() * 2 - 1) * 420
+      const z = 160 + Math.random() * 140
+      const speed = 0.5 + Math.random() * 1.1
+      const wobble = Math.random() * Math.PI * 2
+      state.push({ e, n, z, speed, wobble })
+      const pos = Matrix4.multiplyByPoint(enu, new Cartesian3(e, n, z), new Cartesian3())
+      cloudCollection.add({
+        position: pos,
+        image: cloudImg,
+        width: 420 + Math.random() * 260,
+        height: 240 + Math.random() * 160,
+        color: Color.WHITE.withAlpha(0.14),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      })
+    }
+    const t0 = performance.now()
+    viewer.scene.preUpdate.addEventListener(() => {
+      const t = (performance.now() - t0) / 1000
+      for (let i = 0; i < cloudCollection.length; i++) {
+        const b = cloudCollection.get(i)
+        const s = state[i]
+        const e = s.e + t * s.speed * 6
+        const n = s.n + Math.sin(t * 0.12 + s.wobble) * 18
+        const ew = ((e + 700) % 1400) - 700
+        b.position = Matrix4.multiplyByPoint(enu, new Cartesian3(ew, n, s.z), new Cartesian3())
+      }
+    })
   }
 
   const controller = viewer.scene.screenSpaceCameraController

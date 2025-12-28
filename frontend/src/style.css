@@ -106,6 +106,25 @@ body {
   pointer-events: none;
 }
 
+.credits {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  max-width: min(520px, 70vw);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(9, 12, 18, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(10px);
+  font-size: 12px;
+  opacity: 0.75;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .hud-row {
   display: flex;
   gap: 10px;
