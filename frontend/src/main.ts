@@ -105,6 +105,12 @@ const env = {
 
   cameraLat: Number((import.meta.env.VITE_CAMERA_LAT as string | undefined)?.trim() ?? ''),
   cameraLon: Number((import.meta.env.VITE_CAMERA_LON as string | undefined)?.trim() ?? ''),
+  cameraStartLon: Number((import.meta.env.VITE_CAMERA_START_LON as string | undefined)?.trim() ?? ''),
+  cameraStartLat: Number((import.meta.env.VITE_CAMERA_START_LAT as string | undefined)?.trim() ?? ''),
+  cameraStartHeight: Number((import.meta.env.VITE_CAMERA_START_HEIGHT as string | undefined)?.trim() ?? ''),
+  cameraStartHeadingDeg: Number((import.meta.env.VITE_CAMERA_START_HEADING_DEG as string | undefined)?.trim() ?? ''),
+  cameraStartPitchDeg: Number((import.meta.env.VITE_CAMERA_START_PITCH_DEG as string | undefined)?.trim() ?? ''),
+  cameraStartRollDeg: Number((import.meta.env.VITE_CAMERA_START_ROLL_DEG as string | undefined)?.trim() ?? ''),
 }
 
 const ORNAMENTS = [
@@ -577,6 +583,9 @@ async function init() {
   const clientId = createClientId()
   type LightsMode = 'auto' | 'on' | 'off'
   let lightsMode: LightsMode = ((localStorage.getItem('silentwish_lightsMode') as LightsMode) || 'auto') as LightsMode
+  const DEBUG_MODE =
+    new URLSearchParams(window.location.search).get('debug') === '1' || window.location.hostname === 'localhost'
+  let defaultLayout: LayoutV1 | null = null
 
   $('#app').innerHTML = `
     <div class="layout">
@@ -647,10 +656,14 @@ async function init() {
             <button class="ghost" id="camCityBtn"></button>
             <button class="ghost" id="camTreeBtn"></button>
           </div>
-          <div class="row">
-            <button class="secondary" id="saveStartViewBtn" type="button">Save start view</button>
-            <button class="ghost" id="resetStartViewBtn" type="button">Reset view</button>
-          </div>
+          ${
+            DEBUG_MODE
+              ? `<div class="row">
+            <button class="secondary" id="saveStartViewBtn" type="button">Copy start view (env)</button>
+            <button class="ghost" id="resetStartViewBtn" type="button">Clear local view</button>
+          </div>`
+              : ''
+          }
         </div>
 
         <div class="section">
@@ -666,7 +679,9 @@ async function init() {
           </div>
         </div>
 
-        <div class="section">
+        ${
+          DEBUG_MODE
+            ? `<div class="section">
           <div class="label-row">
             <div class="label">Layout</div>
           </div>
@@ -679,7 +694,9 @@ async function init() {
           <div class="muted" style="font-size:12px;margin-top:8px">
             Export creates a JSON of your current tweaks. Import applies it. Reset clears local tweaks.
           </div>
-        </div>
+        </div>`
+            : ''
+        }
 
         <div class="footer muted">
           No account · No email · Individual wishes are never displayed
@@ -714,7 +731,6 @@ async function init() {
   }
 
   // --- Layout persistence helpers ---
-  const LAYOUT_FLAG = 'silentwish_user_layout'
   const LAYOUT_SOURCE_KEY = 'silentwish_layout_source' // 'default' | 'custom'
   const DEFAULT_LAYOUT_URL = '/layout/default-layout.json'
   const BACKUP_KEY = 'silentwish_layout_backup'
@@ -738,27 +754,28 @@ async function init() {
   }
 
   function collectLayout(): LayoutV1 {
+    const d = defaultLayout
     const layout: LayoutV1 = {
       version: 1,
       savedAt: new Date().toISOString(),
       mainTree: {
-        eastM: getStoredNumber(mainKey.e) ?? 0,
-        northM: getStoredNumber(mainKey.n) ?? 0,
-        scale: getStoredNumber(mainKey.s) ?? 2,
-        headingDeg: getStoredNumber(mainKey.h) ?? 0,
-        groundTrimM: getStoredNumber(mainKey.g) ?? 0,
+        eastM: (DEBUG_MODE ? getStoredNumber(mainKey.e) : null) ?? d?.mainTree?.eastM ?? 0,
+        northM: (DEBUG_MODE ? getStoredNumber(mainKey.n) : null) ?? d?.mainTree?.northM ?? 0,
+        scale: (DEBUG_MODE ? getStoredNumber(mainKey.s) : null) ?? d?.mainTree?.scale ?? 2,
+        headingDeg: (DEBUG_MODE ? getStoredNumber(mainKey.h) : null) ?? d?.mainTree?.headingDeg ?? 0,
+        groundTrimM: (DEBUG_MODE ? getStoredNumber(mainKey.g) : null) ?? d?.mainTree?.groundTrimM ?? 0,
       },
       extraTrees: {
         globals: {
-          eastM: getStoredNumber(extraKeys.east) ?? 0,
-          northM: getStoredNumber(extraKeys.north) ?? 0,
-          scale: getStoredNumber(extraKeys.scale) ?? 1,
-          groundTrimM: getStoredNumber(extraKeys.ground) ?? 0,
+          eastM: (DEBUG_MODE ? getStoredNumber(extraKeys.east) : null) ?? d?.extraTrees?.globals?.eastM ?? 0,
+          northM: (DEBUG_MODE ? getStoredNumber(extraKeys.north) : null) ?? d?.extraTrees?.globals?.northM ?? 0,
+          scale: (DEBUG_MODE ? getStoredNumber(extraKeys.scale) : null) ?? d?.extraTrees?.globals?.scale ?? 1,
+          groundTrimM: (DEBUG_MODE ? getStoredNumber(extraKeys.ground) : null) ?? d?.extraTrees?.globals?.groundTrimM ?? 0,
         },
         perTree: {
-          dz: getStoredJson(extraKeys.dz, {}),
-          scaleMult: getStoredJson(extraKeys.scaleMult, {}),
-          xy: getStoredJson(extraKeys.xy, {}),
+          dz: (DEBUG_MODE ? getStoredJson(extraKeys.dz, {}) : d?.extraTrees?.perTree?.dz ?? {}) ?? {},
+          scaleMult: (DEBUG_MODE ? getStoredJson(extraKeys.scaleMult, {}) : d?.extraTrees?.perTree?.scaleMult ?? {}) ?? {},
+          xy: (DEBUG_MODE ? getStoredJson(extraKeys.xy, {}) : d?.extraTrees?.perTree?.xy ?? {}) ?? {},
         },
       },
     }
@@ -768,7 +785,6 @@ async function init() {
   function applyLayout(
     layout: LayoutV1,
     opts?: {
-      markUser?: boolean
       source?: 'default' | 'custom'
     },
   ) {
@@ -792,14 +808,12 @@ async function init() {
       setStoredJson(extraKeys.xy, layout.extraTrees.perTree.xy ?? {})
     }
 
-    if (opts?.markUser) localStorage.setItem(LAYOUT_FLAG, '1')
     if (opts?.source) localStorage.setItem(LAYOUT_SOURCE_KEY, opts.source)
   }
 
   function resetLocalLayout() {
     for (const k of Object.values(mainKey)) localStorage.removeItem(k)
     for (const k of Object.values(extraKeys)) localStorage.removeItem(k)
-    localStorage.removeItem(LAYOUT_FLAG)
     localStorage.removeItem(LAYOUT_SOURCE_KEY)
   }
 
@@ -824,95 +838,90 @@ async function init() {
 
   async function maybeApplyDefaultLayout() {
     const force = new URLSearchParams(window.location.search).get('layout') === 'default'
-    const source = (localStorage.getItem(LAYOUT_SOURCE_KEY) as 'default' | 'custom' | null) ?? 'default'
+    // Custom layouts are debug-only. In normal mode, always use the shared default baseline.
+    const source = DEBUG_MODE ? ((localStorage.getItem(LAYOUT_SOURCE_KEY) as 'default' | 'custom' | null) ?? 'default') : 'default'
     // If user explicitly imported a custom layout, keep it unless forced.
     if (!force && source === 'custom') return
     try {
       const j = await loadDefaultLayout()
       if (!j) return
-      // Backup whatever exists before applying defaults.
+      // Shared baseline for everyone:
+      // - We keep it in-memory (not localStorage) so different browsers always see the same scene.
+      defaultLayout = j
+      setStatus(`Default layout baseline loaded (${j.savedAt}).${DEBUG_MODE ? ' (debug mode)' : ''}`)
+    } catch {
+      // ignore
+    }
+  }
+
+  if (DEBUG_MODE) {
+    // Wire buttons (debug only)
+    ;($('#exportLayoutBtn') as HTMLButtonElement).onclick = async () => {
+      const layout = collectLayout()
+      const json = JSON.stringify(layout, null, 2)
       try {
-        setStoredJson(BACKUP_KEY, collectLayout())
+        await navigator.clipboard.writeText(json)
+        setStatus('Layout copied to clipboard and downloaded.')
       } catch {
-        // ignore
+        setStatus('Layout downloaded (clipboard unavailable).')
       }
-      // Always apply the shared default as the baseline on load (unless a custom layout is explicitly selected).
-      // Important: do NOT reload here; we want Cmd+Shift+R to land on the correct defaults immediately.
-      applyLayout(j, { markUser: false, source: 'default' })
-      setStatus(`Default layout loaded (${j.savedAt}).`)
-    } catch {
-      // ignore
+      downloadText('silent-wish-layout.json', json)
     }
-  }
-
-  // Wire buttons
-  ;($('#exportLayoutBtn') as HTMLButtonElement).onclick = async () => {
-    const layout = collectLayout()
-    const json = JSON.stringify(layout, null, 2)
-    try {
-      await navigator.clipboard.writeText(json)
-      setStatus('Layout copied to clipboard and downloaded.')
-    } catch {
-      setStatus('Layout downloaded (clipboard unavailable).')
+    ;($('#importLayoutBtn') as HTMLButtonElement).onclick = async () => {
+      const txt = prompt('Paste layout JSON here:')
+      if (!txt) return
+      try {
+        const j = JSON.parse(txt) as LayoutV1
+        // In debug mode, importing a custom layout becomes your local override.
+        try {
+          setStoredJson(BACKUP_KEY, collectLayout())
+        } catch {
+          // ignore
+        }
+        applyLayout(j, { source: 'custom' })
+        setStatus('Layout imported (local). Reloading…')
+        location.reload()
+      } catch (e) {
+        setStatus(`Import failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
-    downloadText('silent-wish-layout.json', json)
-  }
-  ;($('#importLayoutBtn') as HTMLButtonElement).onclick = async () => {
-    const txt = prompt('Paste layout JSON here:')
-    if (!txt) return
-    try {
-      const j = JSON.parse(txt) as LayoutV1
-      applyLayout(j, { markUser: true, source: 'custom' })
-      setStatus('Layout imported. Reloading…')
+    ;($('#resetLayoutBtn') as HTMLButtonElement).onclick = async () => {
+      if (!confirm('Reset all local tree tweaks (main + extra)?')) return
+      resetLocalLayout()
+      setStatus('Local layout reset. Reloading…')
       location.reload()
-    } catch (e) {
-      setStatus(`Import failed: ${e instanceof Error ? e.message : String(e)}`)
     }
-  }
-  ;($('#resetLayoutBtn') as HTMLButtonElement).onclick = async () => {
-    if (!confirm('Reset all local tree tweaks (main + extra)?')) return
-    resetLocalLayout()
-    setStatus('Local layout reset. Reloading…')
-    location.reload()
-  }
 
-  ;($('#loadDefaultLayoutBtn') as HTMLButtonElement).onclick = async () => {
-    if (!confirm('Apply the shared default layout (overwrites your local tweaks)?')) return
-    const j = await loadDefaultLayout()
-    if (!j) return
-    try {
-      setStoredJson(BACKUP_KEY, collectLayout())
-    } catch {
-      // ignore
-    }
-    resetLocalLayout()
-    applyLayout(j, { markUser: false, source: 'default' })
-    setStatus(`Default layout applied (${j.savedAt}). Reloading…`)
-    location.reload()
-  }
-
-  // Expose a quick restore if a default overwrite happened.
-  const restoreBtn = document.createElement('button')
-  restoreBtn.className = 'secondary'
-  restoreBtn.type = 'button'
-  restoreBtn.textContent = 'Restore'
-  restoreBtn.onclick = () => {
-    const b = getStoredJson<LayoutV1 | null>(BACKUP_KEY, null)
-    if (!b) {
-      setStatus('No backup found.')
-      return
-    }
-    try {
-      applyLayout(b)
-      setStatus('Backup restored. Reloading…')
+    ;($('#loadDefaultLayoutBtn') as HTMLButtonElement).onclick = async () => {
+      if (!confirm('Apply the shared default layout (clears your local tweaks)?')) return
+      resetLocalLayout()
+      localStorage.setItem(LAYOUT_SOURCE_KEY, 'default')
+      setStatus('Default layout selected. Reloading…')
       location.reload()
-    } catch (e) {
-      setStatus(`Restore failed: ${e instanceof Error ? e.message : String(e)}`)
     }
+
+    // Expose a quick restore for debug iterations.
+    const restoreBtn = document.createElement('button')
+    restoreBtn.className = 'secondary'
+    restoreBtn.type = 'button'
+    restoreBtn.textContent = 'Restore'
+    restoreBtn.onclick = () => {
+      const b = getStoredJson<LayoutV1 | null>(BACKUP_KEY, null)
+      if (!b) {
+        setStatus('No backup found.')
+        return
+      }
+      try {
+        applyLayout(b, { source: 'custom' })
+        setStatus('Backup restored. Reloading…')
+        location.reload()
+      } catch (e) {
+        setStatus(`Restore failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    const resetBtn = $('#resetLayoutBtn')
+    resetBtn.parentElement?.insertBefore(restoreBtn, resetBtn.nextSibling)
   }
-  // Insert restore button next to reset
-  const resetBtn = $('#resetLayoutBtn')
-  resetBtn.parentElement?.insertBefore(restoreBtn, resetBtn.nextSibling)
 
   // Apply default layout if present and user layout not set (or ?layout=default)
   await maybeApplyDefaultLayout()
@@ -1022,10 +1031,14 @@ async function init() {
   if (viewer.scene.sun) viewer.scene.sun.show = true
   if (viewer.scene.moon) viewer.scene.moon.show = true
 
-  // Start view persistence (so you can tune the first impression in-scene)
-  const START_VIEW_KEY = 'silentwish_start_view_v1'
+  // Camera start view:
+  // - Production should be identical for every user: use env (or built-in defaults).
+  // - Debug mode can copy the current camera to env vars for Vercel.
   type StartView = { lon: number; lat: number; height: number; heading: number; pitch: number; roll: number }
-  const getStartView = (): StartView | null => {
+  const START_VIEW_KEY = 'silentwish_start_view_v1' // debug-only legacy local override
+
+  const getLocalStartViewIfDebug = (): StartView | null => {
+    if (!DEBUG_MODE) return null
     try {
       const raw = localStorage.getItem(START_VIEW_KEY)
       if (!raw) return null
@@ -1044,7 +1057,8 @@ async function init() {
       return null
     }
   }
-  const saveStartView = () => {
+
+  const copyStartViewEnv = async () => {
     const carto = viewer.camera.positionCartographic
     const j: StartView = {
       lon: CesiumMath.toDegrees(carto.longitude),
@@ -1054,13 +1068,33 @@ async function init() {
       pitch: CesiumMath.toDegrees(viewer.camera.pitch),
       roll: CesiumMath.toDegrees(viewer.camera.roll),
     }
+    const lines = [
+      `VITE_CAMERA_START_LON=${j.lon}`,
+      `VITE_CAMERA_START_LAT=${j.lat}`,
+      `VITE_CAMERA_START_HEIGHT=${j.height}`,
+      `VITE_CAMERA_START_HEADING_DEG=${j.heading}`,
+      `VITE_CAMERA_START_PITCH_DEG=${j.pitch}`,
+      `VITE_CAMERA_START_ROLL_DEG=${j.roll}`,
+    ].join('\n')
+    try {
+      await navigator.clipboard.writeText(lines)
+      setStatus('Start view copied as env vars. Paste into Vercel env and redeploy.')
+    } catch {
+      setStatus(`Copy failed. Env vars:\n${lines}`)
+    }
+    // Keep a local debug copy too (optional)
     localStorage.setItem(START_VIEW_KEY, JSON.stringify(j))
-    setStatus(`Start view saved: lon=${j.lon.toFixed(6)} lat=${j.lat.toFixed(6)} h=${j.height.toFixed(1)}m`)
   }
-  ;($('#saveStartViewBtn') as HTMLButtonElement).onclick = () => saveStartView()
-  ;($('#resetStartViewBtn') as HTMLButtonElement).onclick = () => {
-    localStorage.removeItem(START_VIEW_KEY)
-    setStatus('Start view reset (will use default fly-to).')
+
+  if (DEBUG_MODE) {
+    const saveBtn = document.querySelector('#saveStartViewBtn') as HTMLButtonElement | null
+    const resetBtn = document.querySelector('#resetStartViewBtn') as HTMLButtonElement | null
+    if (saveBtn) saveBtn.onclick = () => void copyStartViewEnv()
+    if (resetBtn)
+      resetBtn.onclick = () => {
+        localStorage.removeItem(START_VIEW_KEY)
+        setStatus('Local debug start view cleared.')
+      }
   }
 
   if (has3DTiles) {
@@ -1565,11 +1599,19 @@ async function init() {
 
   // ---- Main tree live edit (XY/scale/heading/ground trim) ----
   // Stored locally (per device) so you can fine-tune placement without redeploy loops.
-  let mainEast = getNumberParam('treeEast') ?? getStoredNumber(mainKey.e) ?? 0
-  let mainNorth = getNumberParam('treeNorth') ?? getStoredNumber(mainKey.n) ?? 0
-  let mainScale = getNumberParam('treeScale') ?? getStoredNumber(mainKey.s) ?? treeScale
-  let mainHeadingDeg = getNumberParam('treeHeading') ?? getStoredNumber(mainKey.h) ?? headingDeg
-  let mainGroundTrim = getNumberParam('treeGround') ?? getStoredNumber(mainKey.g) ?? 0
+  const mainDefaults = (defaultLayout as LayoutV1 | null)?.mainTree
+  let mainEast = getNumberParam('treeEast') ?? (DEBUG_MODE ? getStoredNumber(mainKey.e) : null) ?? mainDefaults?.eastM ?? 0
+  let mainNorth =
+    getNumberParam('treeNorth') ?? (DEBUG_MODE ? getStoredNumber(mainKey.n) : null) ?? mainDefaults?.northM ?? 0
+  let mainScale =
+    getNumberParam('treeScale') ?? (DEBUG_MODE ? getStoredNumber(mainKey.s) : null) ?? mainDefaults?.scale ?? treeScale
+  let mainHeadingDeg =
+    getNumberParam('treeHeading') ??
+    (DEBUG_MODE ? getStoredNumber(mainKey.h) : null) ??
+    mainDefaults?.headingDeg ??
+    headingDeg
+  let mainGroundTrim =
+    getNumberParam('treeGround') ?? (DEBUG_MODE ? getStoredNumber(mainKey.g) : null) ?? mainDefaults?.groundTrimM ?? 0
   const baseTreeLon = treeLonDeg
   const baseTreeLat = treeLatDeg
   let treeResampleTimer: number | null = null
@@ -1602,11 +1644,13 @@ async function init() {
     recomputeLocalOrnaments()
     recomputeLights()
 
-    setStoredNumber(mainKey.e, mainEast)
-    setStoredNumber(mainKey.n, mainNorth)
-    setStoredNumber(mainKey.s, mainScale)
-    setStoredNumber(mainKey.h, mainHeadingDeg)
-    setStoredNumber(mainKey.g, mainGroundTrim)
+    if (DEBUG_MODE) {
+      setStoredNumber(mainKey.e, mainEast)
+      setStoredNumber(mainKey.n, mainNorth)
+      setStoredNumber(mainKey.s, mainScale)
+      setStoredNumber(mainKey.h, mainHeadingDeg)
+      setStoredNumber(mainKey.g, mainGroundTrim)
+    }
     setStatus(
       `Main tree${mainTreeSelected ? ' (selected)' : ''}: east=${mainEast.toFixed(1)}m north=${mainNorth.toFixed(
         1,
@@ -1657,6 +1701,7 @@ async function init() {
   // - Q / E : heading rotate left/right (shift=15°, alt=1°)
   // - G : force resample
   window.addEventListener('keydown', (ev) => {
+    if (!DEBUG_MODE) return
     if (!mainTreeSelected) return
     const step = ev.shiftKey ? 5 : ev.altKey ? 0.2 : 1
     const stepSmall = ev.shiftKey ? 0.1 : 0.05
@@ -1763,26 +1808,31 @@ async function init() {
       // - URL params: ?extraScale=0.6
       // - URL params: ?extraGround=-0.5 (meters, added on top of VITE_EXTRA_TREES_GROUND_OFFSET_M)
       // - localStorage: silentwish_extraEastM / silentwish_extraNorthM
-      const baseOffEast = Number.isFinite(env.extraTreesOffsetEastM) ? env.extraTreesOffsetEastM : 0
-      const baseOffNorth = Number.isFinite(env.extraTreesOffsetNorthM) ? env.extraTreesOffsetNorthM : 0
-      let offEast =
-        getNumberParam('extraEast') ?? getStoredNumber('silentwish_extraEastM') ?? baseOffEast
-      let offNorth =
-        getNumberParam('extraNorth') ?? getStoredNumber('silentwish_extraNorthM') ?? baseOffNorth
-      let extraScale =
-        getNumberParam('extraScale') ?? getStoredNumber('silentwish_extraScale') ?? scale
-      let extraGround =
-        getNumberParam('extraGround') ?? getStoredNumber('silentwish_extraGroundM') ?? 0
+      const extraDefaults = (defaultLayout as LayoutV1 | null)?.extraTrees?.globals
+      const baseOffEast = extraDefaults?.eastM ?? (Number.isFinite(env.extraTreesOffsetEastM) ? env.extraTreesOffsetEastM : 0)
+      const baseOffNorth = extraDefaults?.northM ?? (Number.isFinite(env.extraTreesOffsetNorthM) ? env.extraTreesOffsetNorthM : 0)
+      const baseScale = extraDefaults?.scale ?? scale
+      const baseGroundTrim = extraDefaults?.groundTrimM ?? 0
+      let offEast = getNumberParam('extraEast') ?? (DEBUG_MODE ? getStoredNumber(extraKeys.east) : null) ?? baseOffEast
+      let offNorth = getNumberParam('extraNorth') ?? (DEBUG_MODE ? getStoredNumber(extraKeys.north) : null) ?? baseOffNorth
+      let extraScale = getNumberParam('extraScale') ?? (DEBUG_MODE ? getStoredNumber(extraKeys.scale) : null) ?? baseScale
+      let extraGround = getNumberParam('extraGround') ?? (DEBUG_MODE ? getStoredNumber(extraKeys.ground) : null) ?? baseGroundTrim
 
       // Per-tree Z overrides (meters). Keyed by tree index.
       const perTreeKey = 'silentwish_extraTreeDeltas'
-      const perTreeDeltas: Record<string, number> = getStoredJson(perTreeKey, {})
+      const perTreeDeltas: Record<string, number> = DEBUG_MODE
+        ? getStoredJson(perTreeKey, {})
+        : (((defaultLayout as LayoutV1 | null)?.extraTrees?.perTree?.dz ?? {}) as Record<string, number>)
       // Per-tree scale multipliers (unitless). Keyed by tree index. Effective scale = extraScale * multiplier.
       const perTreeScaleKey = 'silentwish_extraTreeScale'
-      const perTreeScaleMult: Record<string, number> = getStoredJson(perTreeScaleKey, {})
+      const perTreeScaleMult: Record<string, number> = DEBUG_MODE
+        ? getStoredJson(perTreeScaleKey, {})
+        : (((defaultLayout as LayoutV1 | null)?.extraTrees?.perTree?.scaleMult ?? {}) as Record<string, number>)
       // Per-tree XY (ENU) offsets in meters. Keyed by tree index.
       const perTreeXYKey = 'silentwish_extraTreeXY'
-      const perTreeXY: Record<string, { e: number; n: number }> = getStoredJson(perTreeXYKey, {})
+      const perTreeXY: Record<string, { e: number; n: number }> = DEBUG_MODE
+        ? getStoredJson(perTreeXYKey, {})
+        : (((defaultLayout as LayoutV1 | null)?.extraTrees?.perTree?.xy ?? {}) as Record<string, { e: number; n: number }>)
       let selectedTreeIdx: number | null = null
 
       // Apply optional ENU offset in meters before sampling heights (fixes systematic drift).
@@ -1853,13 +1903,15 @@ async function init() {
           })
           extraTreeEntities.push(id)
         }
-        setStoredNumber('silentwish_extraEastM', eM)
-        setStoredNumber('silentwish_extraNorthM', nM)
-        setStoredNumber('silentwish_extraScale', extraScale)
-        setStoredNumber('silentwish_extraGroundM', extraGround)
-        setStoredJson(perTreeKey, perTreeDeltas)
-        setStoredJson(perTreeScaleKey, perTreeScaleMult)
-        setStoredJson(perTreeXYKey, perTreeXY)
+        if (DEBUG_MODE) {
+          setStoredNumber(extraKeys.east, eM)
+          setStoredNumber(extraKeys.north, nM)
+          setStoredNumber(extraKeys.scale, extraScale)
+          setStoredNumber(extraKeys.ground, extraGround)
+          setStoredJson(perTreeKey, perTreeDeltas)
+          setStoredJson(perTreeScaleKey, perTreeScaleMult)
+          setStoredJson(perTreeXYKey, perTreeXY)
+        }
         setStatus(
           `Loaded ${shiftedPts.length} extra trees. Offset east=${eM.toFixed(1)}m north=${nM.toFixed(1)}m scale=${extraScale.toFixed(
             2,
@@ -1959,6 +2011,7 @@ async function init() {
       }
 
       window.addEventListener('keydown', (ev) => {
+        if (!DEBUG_MODE) return
         // If main tree is in edit mode, ignore extra-trees hotkeys to avoid conflicts
         // BUT keep arrow-keys enabled so you can move all extra trees even while editing the main tree (WASD/QE).
         const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)
@@ -2119,20 +2172,24 @@ async function init() {
   ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
   ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToTree()
   const flyToStart = async () => {
-    const sv = getStartView()
-    if (sv) {
-      await viewer.camera.flyTo({
-        destination: Cartesian3.fromDegrees(sv.lon, sv.lat, sv.height),
-        orientation: {
-          heading: CesiumMath.toRadians(sv.heading),
-          pitch: CesiumMath.toRadians(sv.pitch),
-          roll: CesiumMath.toRadians(sv.roll),
-        },
-        duration: 0.9,
-      })
-      return
+    const sv = getLocalStartViewIfDebug()
+    const start: StartView = sv ?? {
+      lon: Number.isFinite(env.cameraStartLon) ? env.cameraStartLon : camLonDeg,
+      lat: Number.isFinite(env.cameraStartLat) ? env.cameraStartLat : camLatDeg,
+      height: Number.isFinite(env.cameraStartHeight) ? env.cameraStartHeight : 180,
+      heading: Number.isFinite(env.cameraStartHeadingDeg) ? env.cameraStartHeadingDeg : 25,
+      pitch: Number.isFinite(env.cameraStartPitchDeg) ? env.cameraStartPitchDeg : -25,
+      roll: Number.isFinite(env.cameraStartRollDeg) ? env.cameraStartRollDeg : 0,
     }
-    await flyToTree()
+    await viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(start.lon, start.lat, start.height),
+      orientation: {
+        heading: CesiumMath.toRadians(start.heading),
+        pitch: CesiumMath.toRadians(start.pitch),
+        roll: CesiumMath.toRadians(start.roll),
+      },
+      duration: 0.9,
+    })
   }
   void flyToStart()
 
