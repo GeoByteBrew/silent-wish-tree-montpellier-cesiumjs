@@ -173,7 +173,11 @@ async function loadImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Promise<string> {
+async function screenshotWithCaption(
+  viewer: Viewer,
+  captionLines: string[],
+  opts?: { watermark?: string; frameUrls?: string[] },
+): Promise<string> {
   // Ensure custom fonts are loaded before rendering canvas text (especially on first use).
   try {
     if (document?.fonts?.load) {
@@ -213,19 +217,6 @@ async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Pr
   // draw 3D
   ctx.drawImage(srcCanvas, framePad, framePad, w - framePad * 2, h - framePad * 2)
 
-  // Optional PNG frame overlay (random). Put your two files here:
-  // - public/frames/frame-1.png
-  // - public/frames/frame-2.png
-  // The PNG should have transparency in the middle.
-  try {
-    const frames = ['/frames/frame-1.png', '/frames/frame-2.png'] as const
-    const frameUrl = frames[Math.floor(Math.random() * frames.length)]
-    const frameImg = await loadImage(frameUrl)
-    ctx.drawImage(frameImg, 0, 0, out.width, out.height)
-  } catch {
-    // ignore and keep built-in frame
-  }
-
   // footer
   ctx.fillStyle = '#0b0f14'
   ctx.fillRect(0, h, w, footerH)
@@ -262,10 +253,24 @@ async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Pr
   // small watermark on the right
   ctx.globalAlpha = 0.9
   ctx.font = `500 ${Math.max(12, Math.floor(footerH * 0.16))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
-  const wm = 'GeoByteBrew · Montpellier'
+  const wm = opts?.watermark ?? 'GeoByteBrew · Montpellier'
   const tw = ctx.measureText(wm).width
   ctx.fillText(wm, w - pad - tw, h + pad)
   ctx.globalAlpha = 1
+
+  // Optional PNG frame overlay (random) as the TOP layer (so it isn't covered by the footer).
+  // Put your two files here:
+  // - public/frames/frame-1.png
+  // - public/frames/frame-2.png
+  // The PNG should have transparency in the middle.
+  try {
+    const frames = (opts?.frameUrls?.length ? opts.frameUrls : ['/frames/frame-1.png', '/frames/frame-2.png']) as string[]
+    const frameUrl = frames[Math.floor(Math.random() * frames.length)]
+    const frameImg = await loadImage(frameUrl)
+    ctx.drawImage(frameImg, 0, 0, out.width, out.height)
+  } catch {
+    // ignore and keep built-in frame
+  }
 
   return out.toDataURL('image/png')
 }
@@ -1928,11 +1933,14 @@ async function init() {
       void fetchStats()
 
       const stamp = formatLocalTimestamp()
-      const caption = [
-        'Montpellier – Sessiz Dilekler Ağacı – 2026',
-        `Shared: ${stamp} (Montpellier)`,
-      ]
-      const dataUrl = await screenshotWithCaption(viewer, caption)
+      const caption =
+        lang === 'fr'
+          ? ['Montpellier – Arbre à vœux silencieux – 2026', `Partagé : ${stamp} (Montpellier)`]
+          : ['Montpellier – Silent Wish Tree – 2026', `Shared: ${stamp} (Montpellier)`]
+
+      const dataUrl = await screenshotWithCaption(viewer, caption, {
+        watermark: lang === 'fr' ? 'Souvenir de Montpellier' : 'Montpellier memory',
+      })
       downloadBtn.disabled = false
       downloadBtn.onclick = () => downloadDataUrl('silent-wish-montpellier.png', dataUrl)
 
