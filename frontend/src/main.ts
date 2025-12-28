@@ -164,6 +164,15 @@ function downloadDataUrl(filename: string, dataUrl: string) {
   a.remove()
 }
 
+async function loadImage(url: string): Promise<HTMLImageElement> {
+  return await new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error(`Failed to load image: ${url}`))
+    img.src = url
+  })
+}
+
 async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Promise<string> {
   // ensure a frame is rendered
   viewer.render()
@@ -194,6 +203,19 @@ async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Pr
 
   // draw 3D
   ctx.drawImage(srcCanvas, framePad, framePad, w - framePad * 2, h - framePad * 2)
+
+  // Optional PNG frame overlay (random). Put your two files here:
+  // - public/frames/frame-1.png
+  // - public/frames/frame-2.png
+  // The PNG should have transparency in the middle.
+  try {
+    const frames = ['/frames/frame-1.png', '/frames/frame-2.png'] as const
+    const frameUrl = frames[Math.floor(Math.random() * frames.length)]
+    const frameImg = await loadImage(frameUrl)
+    ctx.drawImage(frameImg, 0, 0, out.width, out.height)
+  } catch {
+    // ignore and keep built-in frame
+  }
 
   // footer
   ctx.fillStyle = '#0b0f14'
