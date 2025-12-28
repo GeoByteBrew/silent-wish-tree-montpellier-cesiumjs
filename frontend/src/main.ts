@@ -225,25 +225,25 @@ async function screenshotWithCaption(
   const title = captionLines[0] ?? ''
   const rest = captionLines.slice(1, 3)
   const titleSize = Math.max(34, Math.floor(footerH * 0.44))
-  const bodySize = Math.max(14, Math.floor(footerH * 0.20))
+  const bodySize = Math.max(13, Math.floor(footerH * 0.18))
   const titleLineH = Math.max(30, Math.floor(footerH * 0.42))
-  const bodyLineH = Math.max(18, Math.floor(footerH * 0.26))
+  const bodyLineH = Math.max(16, Math.floor(footerH * 0.24))
   let y = h + pad
 
   ctx.font = `700 ${titleSize}px Tangerine, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
   ctx.fillText(title, pad, y)
   y += titleLineH
 
-  ctx.globalAlpha = 0.95
-  ctx.font = `600 ${bodySize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+  ctx.globalAlpha = 0.88
+  ctx.font = `500 ${bodySize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
   for (const line of rest) {
     ctx.fillText(line, pad, y)
     y += bodyLineH
   }
   ctx.globalAlpha = 1
   // small watermark on the right
-  ctx.globalAlpha = 0.9
-  ctx.font = `500 ${Math.max(12, Math.floor(footerH * 0.16))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+  ctx.globalAlpha = 0.65
+  ctx.font = `400 ${Math.max(11, Math.floor(footerH * 0.145))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
   const wm = opts?.watermark ?? 'GeoByteBrew · Montpellier'
   const tw = ctx.measureText(wm).width
   ctx.fillText(wm, w - pad - tw, h + pad)
