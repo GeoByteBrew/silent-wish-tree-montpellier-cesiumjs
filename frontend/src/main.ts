@@ -10,6 +10,7 @@ import {
   IonResource,
   Math as CesiumMath,
   Matrix4,
+  Billboard,
   BillboardCollection,
   Model,
   Quaternion,
@@ -574,7 +575,7 @@ async function init() {
           <div class="spinner" aria-hidden="true"></div>
           <div class="loading-title">Loading Montpellier…</div>
           <div class="loading-sub" id="loadingText">Starting…</div>
-        </div>
+    </div>
         <div class="hud">
           <div class="hud-row">
             <span class="badge" id="totalBadge">…</span>
@@ -1397,6 +1398,8 @@ async function init() {
 
   // Load Orn.* anchors from the tree model (if available). This makes ornaments land exactly where you placed them in Blender.
   let ornAnchors: Array<{ name: string; matrix: Matrix4 }> = []
+  // Load Light.* anchors (for tree lights)
+  let lightAnchors: Array<{ name: string; matrix: Matrix4 }> = []
   if (treeModel && loadedTreeUrl && loadedTreeUrl.endsWith('.glb')) {
     try {
       ornAnchors = await loadAnchorMatrices(loadedTreeUrl, 'Orn.')
@@ -1404,6 +1407,99 @@ async function init() {
       else setStatus(`No Orn.* anchors found in ${loadedTreeUrl}.`)
     } catch (e) {
       setStatus(`Failed to read anchors from ${loadedTreeUrl}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    try {
+      lightAnchors = await loadAnchorMatrices(loadedTreeUrl, 'Light.')
+      if (lightAnchors.length) setStatus(`Loaded ${lightAnchors.length} light anchors from ${loadedTreeUrl}.`)
+    } catch {
+      // ignore (lights are optional)
+    }
+  }
+
+  // Keep ornaments + lights attached to the main tree, even if the tree modelMatrix gets updated after placement.
+  type LocalOrnInstance = { model: Model; anchorMatrix: Matrix4 }
+  const localOrnaments: LocalOrnInstance[] = []
+  const recomputeLocalOrnaments = () => {
+    if (!treeModel) return
+    for (const o of localOrnaments) {
+      o.model.modelMatrix = Matrix4.multiply(treeModel.modelMatrix, o.anchorMatrix, new Matrix4())
+    }
+  }
+
+  // Lights: simple glowing billboards positioned at Light.* anchors.
+  const makeGlowDataUrl = (size = 128) => {
+    const c = document.createElement('canvas')
+    c.width = size
+    c.height = size
+    const ctx = c.getContext('2d')
+    if (!ctx) return ''
+    ctx.clearRect(0, 0, size, size)
+    const g = ctx.createRadialGradient(size * 0.5, size * 0.5, size * 0.08, size * 0.5, size * 0.5, size * 0.5)
+    g.addColorStop(0, 'rgba(255,235,180,1.0)')
+    g.addColorStop(0.25, 'rgba(255,220,140,0.85)')
+    g.addColorStop(1, 'rgba(255,200,120,0.0)')
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(size * 0.5, size * 0.5, size * 0.5, 0, Math.PI * 2)
+    ctx.fill()
+    return c.toDataURL('image/png')
+  }
+
+  const lightsCollection = new BillboardCollection()
+  viewer.scene.primitives.add(lightsCollection)
+  const lightSprite = makeGlowDataUrl(128)
+  const lights: Array<{ anchorMatrix: Matrix4; billboard: Billboard }> = []
+
+  const rebuildLights = () => {
+    lightsCollection.removeAll()
+    lights.length = 0
+    if (!treeModel || !lightAnchors.length || !lightSprite) return
+    for (const a of lightAnchors) {
+      const m = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
+      const pos = Matrix4.getTranslation(m, new Cartesian3())
+      const b = lightsCollection.add({
+        position: pos,
+        image: lightSprite,
+        width: 36,
+        height: 36,
+        color: Color.WHITE.withAlpha(0.0),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      })
+      lights.push({ anchorMatrix: a.matrix, billboard: b })
+    }
+  }
+
+  const recomputeLights = () => {
+    if (!treeModel) return
+    for (const l of lights) {
+      const m = Matrix4.multiply(treeModel.modelMatrix, l.anchorMatrix, new Matrix4())
+      l.billboard.position = Matrix4.getTranslation(m, new Cartesian3())
+    }
+  }
+
+  const getParisMinutesOfDay = () => {
+    const parts = new Intl.DateTimeFormat('fr-FR', {
+      timeZone: 'Europe/Paris',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date())
+    const hh = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
+    const mm = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
+    return hh * 60 + mm
+  }
+
+  const updateLightsOnOff = () => {
+    // On from 17:00 to 07:00 (Europe/Paris)
+    const m = getParisMinutesOfDay()
+    const on = m >= 17 * 60 || m < 7 * 60
+    const base = on ? 0.65 : 0.0
+    // subtle twinkle
+    const t = performance.now() / 1000
+    for (let i = 0; i < lights.length; i++) {
+      const tw = on ? 0.12 * Math.sin(t * 1.7 + i * 0.9) : 0
+      const a = Math.max(0, Math.min(1, base + tw))
+      lights[i].billboard.color = Color.WHITE.withAlpha(a)
     }
   }
 
@@ -1442,6 +1538,9 @@ async function init() {
     const q = Transforms.headingPitchRollQuaternion(pos, new HeadingPitchRoll(CesiumMath.toRadians(mainHeadingDeg), 0, 0))
     const m = Matrix4.fromTranslationQuaternionRotationScale(pos, q, new Cartesian3(mainScale, mainScale, mainScale), new Matrix4())
     treeModel.modelMatrix = m
+    // Keep attached objects aligned with the tree after any modelMatrix update.
+    recomputeLocalOrnaments()
+    recomputeLights()
 
     setStoredNumber(mainKey.e, mainEast)
     setStoredNumber(mainKey.n, mainNorth)
@@ -1461,6 +1560,15 @@ async function init() {
   if (treeModel) {
     void updateMainTreeModelMatrix({ resample: true })
   }
+
+  // Initialize lights once tree model is ready.
+  if (treeModel && lightAnchors.length) {
+    rebuildLights()
+  }
+  // Update lights each frame (time-based scheduler).
+  viewer.scene.preUpdate.addEventListener(() => {
+    updateLightsOnOff()
+  })
 
   const scheduleMainTreeResample = () => {
     if (!has3DTiles) return
@@ -1967,8 +2075,7 @@ async function init() {
   }
   void flyToStart()
 
-  // Local ornament placement (simple "drop near tree" for MVP)
-  const localOrnaments: Model[] = []
+  // Local ornament placement
   async function placeLocalOrnament(anchorIndex: number, ornamentId: OrnamentId) {
     const orn = ORNAMENTS.find((o) => o.id === ornamentId)
     const file = orn?.file ?? ornamentId
@@ -1976,10 +2083,12 @@ async function init() {
 
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
-    let modelMatrix: Matrix4 | null = null
+    let worldMatrix: Matrix4 | null = null
+    let anchorMatrix: Matrix4 | null = null
     if (treeModel && ornAnchors.length) {
       const a = ornAnchors[anchorIndex % ornAnchors.length]
-      modelMatrix = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
+      anchorMatrix = a.matrix
+      worldMatrix = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
     } else if (treeModel) {
       // Fallback: drop near tree (kept as backup)
       const origin = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
@@ -1989,20 +2098,21 @@ async function init() {
       const height = 10 + ((anchorIndex % 25) / 25) * 14
       const offset = new Cartesian3(radius * Math.cos(angle), radius * Math.sin(angle), height)
       const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
-      modelMatrix = Matrix4.fromTranslation(pos)
+      worldMatrix = Matrix4.fromTranslation(pos)
     }
     try {
-      if (!modelMatrix) return
+      if (!worldMatrix) return
       const model = await Model.fromGltfAsync({
         url,
-        modelMatrix,
+        modelMatrix: worldMatrix,
         scale: 1.0,
         // Keep ornaments visible even if they're small or the camera is far.
         minimumPixelSize: 24,
         maximumScale: 10,
       })
       viewer.scene.primitives.add(model)
-      localOrnaments.push(model)
+      // Store anchor matrix (if any) so ornaments stay attached when the tree is moved/rescaled later.
+      if (anchorMatrix) localOrnaments.push({ model, anchorMatrix })
     } catch (e) {
       setStatus(`Failed to load ornament model: ${file}.glb (${e instanceof Error ? e.message : String(e)})`)
     }
