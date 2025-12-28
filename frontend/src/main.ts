@@ -585,6 +585,8 @@ async function init() {
   let lightsMode: LightsMode = ((localStorage.getItem('silentwish_lightsMode') as LightsMode) || 'auto') as LightsMode
   const DEBUG_MODE =
     new URLSearchParams(window.location.search).get('debug') === '1' || window.location.hostname === 'localhost'
+  const DEBUG_LIGHTS_STATUS =
+    DEBUG_MODE && new URLSearchParams(window.location.search).get('debugLights') === '1'
   let defaultLayout: LayoutV1 | null = null
 
   $('#app').innerHTML = `
@@ -1078,10 +1080,12 @@ async function init() {
     ].join('\n')
     try {
       await navigator.clipboard.writeText(lines)
-      setStatus('Start view copied as env vars. Paste into Vercel env and redeploy.')
+      setStatus('Start view copied. Also downloading camera-start-view.env …')
     } catch {
-      setStatus(`Copy failed. Env vars:\n${lines}`)
+      // Clipboard can fail due to permissions. We'll still provide it via a download.
+      setStatus('Clipboard blocked. Downloading camera-start-view.env …')
     }
+    downloadText('camera-start-view.env', lines)
     // Keep a local debug copy too (optional)
     localStorage.setItem(START_VIEW_KEY, JSON.stringify(j))
   }
@@ -1589,6 +1593,7 @@ async function init() {
   // (We keep it quiet unless lightsMode === 'on'.)
   let lastLightDebugAt = 0
   const debugFirstLightDistance = () => {
+    if (!DEBUG_LIGHTS_STATUS) return
     if (!treeModel || lightsMode !== 'on' || !lights.length) return
     const now = performance.now()
     if (now - lastLightDebugAt < 1500) return
