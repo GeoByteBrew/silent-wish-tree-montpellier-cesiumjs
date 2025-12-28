@@ -13,6 +13,7 @@ import {
   Billboard,
   BillboardCollection,
   Model,
+  NearFarScalar,
   Quaternion,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -1495,33 +1496,39 @@ async function init() {
   const lightsCollection = new BillboardCollection()
   viewer.scene.primitives.add(lightsCollection)
   const lightSprite = makeGlowDataUrl(128)
-  const lights: Array<{ anchorMatrix: Matrix4; billboard: Billboard }> = []
+  // Store per-light local position in MODEL space (not ECEF). The collection's modelMatrix will be set to treeModel.modelMatrix.
+  const lights: Array<{ localPos: Cartesian3; billboard: Billboard }> = []
 
   const rebuildLights = () => {
     lightsCollection.removeAll()
     lights.length = 0
     if (!treeModel || !lightAnchors.length || !lightSprite) return
+    // Attach the whole collection to the tree. Billboards positions are interpreted in collection local space.
+    lightsCollection.modelMatrix = Matrix4.clone(treeModel.modelMatrix, new Matrix4())
     for (const a of lightAnchors) {
-      const m = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
-      const pos = Matrix4.getTranslation(m, new Cartesian3())
+      // a.matrix is in glTF model space; its translation is the anchor point in model coordinates.
+      const localPos = Matrix4.getTranslation(a.matrix, new Cartesian3())
       const b = lightsCollection.add({
-        position: pos,
+        position: localPos,
         image: lightSprite,
-        width: 36,
-        height: 36,
+        width: 26,
+        height: 26,
         color: Color.WHITE.withAlpha(0.0),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        // Keep visible but not "UI-stuck":
+        // - let depth test happen at close range
+        // - fade/scale with distance
+        disableDepthTestDistance: 180,
+        translucencyByDistance: new NearFarScalar(20, 1.0, 400, 0.0),
+        scaleByDistance: new NearFarScalar(20, 1.0, 400, 0.35),
       })
-      lights.push({ anchorMatrix: a.matrix, billboard: b })
+      lights.push({ localPos, billboard: b })
     }
   }
 
   const recomputeLights = () => {
     if (!treeModel) return
-    for (const l of lights) {
-      const m = Matrix4.multiply(treeModel.modelMatrix, l.anchorMatrix, new Matrix4())
-      l.billboard.position = Matrix4.getTranslation(m, new Cartesian3())
-    }
+    // Only update the collection transform; individual billboards stay in model space.
+    lightsCollection.modelMatrix = Matrix4.clone(treeModel.modelMatrix, new Matrix4())
   }
 
   const getParisMinutesOfDay = () => {
@@ -1548,6 +1555,25 @@ async function init() {
       const tw = on ? 0.12 * Math.sin(t * 1.7 + i * 0.9) : 0
       const a = Math.max(0, Math.min(1, base + tw))
       lights[i].billboard.color = Color.WHITE.withAlpha(a)
+    }
+  }
+
+  // Debug aid: if lights appear to "follow the camera", we can verify they're actually tree-attached by checking distance stability.
+  // (We keep it quiet unless lightsMode === 'on'.)
+  let lastLightDebugAt = 0
+  const debugFirstLightDistance = () => {
+    if (!treeModel || lightsMode !== 'on' || !lights.length) return
+    const now = performance.now()
+    if (now - lastLightDebugAt < 1500) return
+    lastLightDebugAt = now
+    try {
+      const treePos = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
+      const first = lights[0]
+      const lightWorld = Matrix4.multiplyByPoint(lightsCollection.modelMatrix, first.localPos, new Cartesian3())
+      const d = Cartesian3.distance(treePos, lightWorld)
+      setStatus(`Lights debug: firstLight Δ=${d.toFixed(2)}m (should stay stable while moving camera)`)
+    } catch {
+      // ignore
     }
   }
 
@@ -1616,6 +1642,7 @@ async function init() {
   // Update lights each frame (time-based scheduler).
   viewer.scene.preUpdate.addEventListener(() => {
     updateLightsOnOff()
+    debugFirstLightDistance()
   })
 
   const scheduleMainTreeResample = () => {
