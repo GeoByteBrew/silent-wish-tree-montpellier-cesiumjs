@@ -225,17 +225,23 @@ async function screenshotWithCaption(
   const title = captionLines[0] ?? ''
   const rest = captionLines.slice(1, 3)
   const titleSize = Math.max(34, Math.floor(footerH * 0.44))
-  const bodySize = Math.max(13, Math.floor(footerH * 0.18))
+  const bodySize = Math.max(12, Math.floor(footerH * 0.165))
   const titleLineH = Math.max(30, Math.floor(footerH * 0.42))
-  const bodyLineH = Math.max(16, Math.floor(footerH * 0.24))
+  const bodyLineH = Math.max(15, Math.floor(footerH * 0.22))
   let y = h + pad
 
   ctx.font = `700 ${titleSize}px Tangerine, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
   ctx.fillText(title, pad, y)
-  y += titleLineH
+  const yAfterTitle = y + titleLineH
 
-  ctx.globalAlpha = 0.88
-  ctx.font = `500 ${bodySize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+  // Put the secondary lines closer to the bottom of the footer for a cleaner "card" look.
+  const footerBottom = h + footerH
+  const desiredBodyTop = footerBottom - pad - bodyLineH * Math.max(1, rest.length)
+  const yBody = Math.max(yAfterTitle + Math.floor(bodyLineH * 0.2), desiredBodyTop)
+
+  ctx.globalAlpha = 0.78
+  ctx.font = `400 ${bodySize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+  y = yBody
   for (const line of rest) {
     ctx.fillText(line, pad, y)
     y += bodyLineH
