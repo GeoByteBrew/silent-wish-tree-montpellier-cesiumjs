@@ -37,6 +37,10 @@ const I18N: Record<Lang, Record<string, string>> = {
     camera: 'Caméra',
     camCity: 'Ville',
     camTree: 'Arbre',
+    lights: 'Guirlande',
+    lightsAuto: 'Auto',
+    lightsOn: 'On',
+    lightsOff: 'Off',
     errorMissing: 'Ajoute un vœu et complète le captcha.',
     errorServer: 'Erreur serveur. Réessaie.',
     reveal: 'Révélation',
@@ -57,6 +61,10 @@ const I18N: Record<Lang, Record<string, string>> = {
     camera: 'Camera',
     camCity: 'City',
     camTree: 'Tree',
+    lights: 'Lights',
+    lightsAuto: 'Auto',
+    lightsOn: 'On',
+    lightsOff: 'Off',
     errorMissing: 'Please write a wish and complete the captcha.',
     errorServer: 'Server error. Try again.',
     reveal: 'Reveal',
@@ -566,6 +574,8 @@ async function init() {
   let turnstileWidgetId: string | null = null
 
   const clientId = createClientId()
+  type LightsMode = 'auto' | 'on' | 'off'
+  let lightsMode: LightsMode = ((localStorage.getItem('silentwish_lightsMode') as LightsMode) || 'auto') as LightsMode
 
   $('#app').innerHTML = `
     <div class="layout">
@@ -639,6 +649,19 @@ async function init() {
           <div class="row">
             <button class="secondary" id="saveStartViewBtn" type="button">Save start view</button>
             <button class="ghost" id="resetStartViewBtn" type="button">Reset view</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="label-row">
+            <div class="label" id="lightsLabel"></div>
+          </div>
+          <div class="row">
+            <div class="segmented" id="lightsSeg">
+              <button class="seg" id="lightsAutoBtn" type="button"></button>
+              <button class="seg" id="lightsOnBtn" type="button"></button>
+              <button class="seg" id="lightsOffBtn" type="button"></button>
+            </div>
           </div>
         </div>
 
@@ -918,6 +941,10 @@ async function init() {
     ;($('#camLabel') as HTMLDivElement).textContent = t('camera')
     ;($('#camCityBtn') as HTMLButtonElement).textContent = t('camCity')
     ;($('#camTreeBtn') as HTMLButtonElement).textContent = t('camTree')
+    ;($('#lightsLabel') as HTMLDivElement).textContent = t('lights')
+    ;($('#lightsAutoBtn') as HTMLButtonElement).textContent = t('lightsAuto')
+    ;($('#lightsOnBtn') as HTMLButtonElement).textContent = t('lightsOn')
+    ;($('#lightsOffBtn') as HTMLButtonElement).textContent = t('lightsOff')
     ;($('#revealBtn') as HTMLButtonElement).textContent = t('reveal')
 
     ;($('#langFr') as HTMLButtonElement).classList.toggle('active', lang === 'fr')
@@ -956,6 +983,21 @@ async function init() {
 
   renderTexts()
   renderOrnaments()
+
+  const renderLightsControls = () => {
+    ;($('#lightsAutoBtn') as HTMLButtonElement).classList.toggle('active', lightsMode === 'auto')
+    ;($('#lightsOnBtn') as HTMLButtonElement).classList.toggle('active', lightsMode === 'on')
+    ;($('#lightsOffBtn') as HTMLButtonElement).classList.toggle('active', lightsMode === 'off')
+  }
+  const setLightsMode = (m: LightsMode) => {
+    lightsMode = m
+    localStorage.setItem('silentwish_lightsMode', m)
+    renderLightsControls()
+  }
+  ;($('#lightsAutoBtn') as HTMLButtonElement).onclick = () => setLightsMode('auto')
+  ;($('#lightsOnBtn') as HTMLButtonElement).onclick = () => setLightsMode('on')
+  ;($('#lightsOffBtn') as HTMLButtonElement).onclick = () => setLightsMode('off')
+  renderLightsControls()
 
   // Cesium init
   if (!env.ionToken) {
@@ -1400,17 +1442,22 @@ async function init() {
   let ornAnchors: Array<{ name: string; matrix: Matrix4 }> = []
   // Load Light.* anchors (for tree lights)
   let lightAnchors: Array<{ name: string; matrix: Matrix4 }> = []
-  if (treeModel && loadedTreeUrl && loadedTreeUrl.endsWith('.glb')) {
+  const anchorSourceUrl =
+    loadedTreeUrl && loadedTreeUrl.endsWith('.glb')
+      ? loadedTreeUrl
+      : treeUrlCandidates.find((u) => u.endsWith('.glb')) ?? null
+
+  if (treeModel && anchorSourceUrl) {
     try {
-      ornAnchors = await loadAnchorMatrices(loadedTreeUrl, 'Orn.')
-      if (ornAnchors.length) setStatus(`Loaded ${ornAnchors.length} ornament anchors from ${loadedTreeUrl}.`)
-      else setStatus(`No Orn.* anchors found in ${loadedTreeUrl}.`)
+      ornAnchors = await loadAnchorMatrices(anchorSourceUrl, 'Orn.')
+      if (ornAnchors.length) setStatus(`Loaded ${ornAnchors.length} ornament anchors from ${anchorSourceUrl}.`)
+      else setStatus(`No Orn.* anchors found in ${anchorSourceUrl}.`)
     } catch (e) {
-      setStatus(`Failed to read anchors from ${loadedTreeUrl}: ${e instanceof Error ? e.message : String(e)}`)
+      setStatus(`Failed to read anchors from ${anchorSourceUrl}: ${e instanceof Error ? e.message : String(e)}`)
     }
     try {
-      lightAnchors = await loadAnchorMatrices(loadedTreeUrl, 'Light.')
-      if (lightAnchors.length) setStatus(`Loaded ${lightAnchors.length} light anchors from ${loadedTreeUrl}.`)
+      lightAnchors = await loadAnchorMatrices(anchorSourceUrl, 'Light.')
+      if (lightAnchors.length) setStatus(`Loaded ${lightAnchors.length} light anchors from ${anchorSourceUrl}.`)
     } catch {
       // ignore (lights are optional)
     }
@@ -1492,7 +1539,8 @@ async function init() {
   const updateLightsOnOff = () => {
     // On from 17:00 to 07:00 (Europe/Paris)
     const m = getParisMinutesOfDay()
-    const on = m >= 17 * 60 || m < 7 * 60
+    const autoOn = m >= 17 * 60 || m < 7 * 60
+    const on = lightsMode === 'on' ? true : lightsMode === 'off' ? false : autoOn
     const base = on ? 0.65 : 0.0
     // subtle twinkle
     const t = performance.now() / 1000
