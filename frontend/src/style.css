@@ -11,6 +11,22 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Screenshot font (bundled locally so it works on Vercel without external font hosts) */
+@font-face {
+  font-family: 'Tangerine';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/Tangerine-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Tangerine';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/Tangerine-Bold.woff2') format('woff2');
+}
+
 html,
 body {
   height: 100%;

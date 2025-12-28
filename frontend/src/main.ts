@@ -174,6 +174,15 @@ async function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Promise<string> {
+  // Ensure custom fonts are loaded before rendering canvas text (especially on first use).
+  try {
+    if (document?.fonts?.load) {
+      await document.fonts.load('700 44px Tangerine')
+    }
+  } catch {
+    // ignore
+  }
+
   // ensure a frame is rendered
   viewer.render()
   const srcCanvas = viewer.scene.canvas
@@ -228,15 +237,28 @@ async function screenshotWithCaption(viewer: Viewer, captionLines: string[]): Pr
   ctx.fillRect(0, h, w, 3)
 
   ctx.fillStyle = '#ffffff'
-  ctx.font = `600 ${Math.max(16, Math.floor(footerH * 0.22))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
   ctx.textBaseline = 'top'
 
-  const lineH = Math.max(18, Math.floor(footerH * 0.28))
+  // First line in Tangerine (memory vibe), rest in sans for readability.
+  const title = captionLines[0] ?? ''
+  const rest = captionLines.slice(1, 3)
+  const titleSize = Math.max(34, Math.floor(footerH * 0.44))
+  const bodySize = Math.max(14, Math.floor(footerH * 0.20))
+  const titleLineH = Math.max(30, Math.floor(footerH * 0.42))
+  const bodyLineH = Math.max(18, Math.floor(footerH * 0.26))
   let y = h + pad
-  for (const line of captionLines.slice(0, 3)) {
+
+  ctx.font = `700 ${titleSize}px Tangerine, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+  ctx.fillText(title, pad, y)
+  y += titleLineH
+
+  ctx.globalAlpha = 0.95
+  ctx.font = `600 ${bodySize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+  for (const line of rest) {
     ctx.fillText(line, pad, y)
-    y += lineH
+    y += bodyLineH
   }
+  ctx.globalAlpha = 1
   // small watermark on the right
   ctx.globalAlpha = 0.9
   ctx.font = `500 ${Math.max(12, Math.floor(footerH * 0.16))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
