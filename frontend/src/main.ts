@@ -715,6 +715,7 @@ async function init() {
 
   // --- Layout persistence helpers ---
   const LAYOUT_FLAG = 'silentwish_user_layout'
+  const LAYOUT_SOURCE_KEY = 'silentwish_layout_source' // 'default' | 'custom'
   const DEFAULT_LAYOUT_URL = '/layout/default-layout.json'
   const BACKUP_KEY = 'silentwish_layout_backup'
 
@@ -764,7 +765,13 @@ async function init() {
     return layout
   }
 
-  function applyLayout(layout: LayoutV1) {
+  function applyLayout(
+    layout: LayoutV1,
+    opts?: {
+      markUser?: boolean
+      source?: 'default' | 'custom'
+    },
+  ) {
     if (!layout || layout.version !== 1) throw new Error('Unsupported layout version')
 
     if (layout.mainTree) {
@@ -785,13 +792,15 @@ async function init() {
       setStoredJson(extraKeys.xy, layout.extraTrees.perTree.xy ?? {})
     }
 
-    localStorage.setItem(LAYOUT_FLAG, '1')
+    if (opts?.markUser) localStorage.setItem(LAYOUT_FLAG, '1')
+    if (opts?.source) localStorage.setItem(LAYOUT_SOURCE_KEY, opts.source)
   }
 
   function resetLocalLayout() {
     for (const k of Object.values(mainKey)) localStorage.removeItem(k)
     for (const k of Object.values(extraKeys)) localStorage.removeItem(k)
     localStorage.removeItem(LAYOUT_FLAG)
+    localStorage.removeItem(LAYOUT_SOURCE_KEY)
   }
 
   async function loadDefaultLayout(): Promise<LayoutV1 | null> {
@@ -813,34 +822,11 @@ async function init() {
     }
   }
 
-  function hasAnyLocalTweaks(): boolean {
-    const keysToCheck = [
-      ...Object.values(mainKey),
-      ...Object.values(extraKeys),
-      'silentwish_extraTreeDeltas',
-      'silentwish_extraTreeScale',
-      'silentwish_extraTreeXY',
-      'silentwish_extraGroundM',
-      'silentwish_extraScale',
-      'silentwish_extraEastM',
-      'silentwish_extraNorthM',
-    ]
-    return keysToCheck.some((k) => localStorage.getItem(k) != null)
-  }
-
   async function maybeApplyDefaultLayout() {
     const force = new URLSearchParams(window.location.search).get('layout') === 'default'
-    const hasUser = localStorage.getItem(LAYOUT_FLAG) === '1'
-    // If we already have user tweaks, never auto-apply defaults (unless forced).
-    if (hasUser && !force) return
-
-    // If there are existing tweak keys but the flag isn't set yet (older versions), trust the existing values.
-    // This prevents accidental overwrites on deploy.
-    if (!force && hasAnyLocalTweaks()) {
-      localStorage.setItem(LAYOUT_FLAG, '1')
-      setStatus('Existing local tweaks detected; default layout will not overwrite them.')
-      return
-    }
+    const source = (localStorage.getItem(LAYOUT_SOURCE_KEY) as 'default' | 'custom' | null) ?? 'default'
+    // If user explicitly imported a custom layout, keep it unless forced.
+    if (!force && source === 'custom') return
     try {
       const j = await loadDefaultLayout()
       if (!j) return
@@ -850,10 +836,10 @@ async function init() {
       } catch {
         // ignore
       }
-      applyLayout(j)
-      setStatus(`Default layout applied (${j.savedAt}).`)
-      // reload to ensure all runtime state picks up the new values
-      location.reload()
+      // Always apply the shared default as the baseline on load (unless a custom layout is explicitly selected).
+      // Important: do NOT reload here; we want Cmd+Shift+R to land on the correct defaults immediately.
+      applyLayout(j, { markUser: false, source: 'default' })
+      setStatus(`Default layout loaded (${j.savedAt}).`)
     } catch {
       // ignore
     }
@@ -876,7 +862,7 @@ async function init() {
     if (!txt) return
     try {
       const j = JSON.parse(txt) as LayoutV1
-      applyLayout(j)
+      applyLayout(j, { markUser: true, source: 'custom' })
       setStatus('Layout imported. Reloading…')
       location.reload()
     } catch (e) {
@@ -900,7 +886,7 @@ async function init() {
       // ignore
     }
     resetLocalLayout()
-    applyLayout(j)
+    applyLayout(j, { markUser: false, source: 'default' })
     setStatus(`Default layout applied (${j.savedAt}). Reloading…`)
     location.reload()
   }
