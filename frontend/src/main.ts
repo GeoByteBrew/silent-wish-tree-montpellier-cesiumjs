@@ -164,19 +164,10 @@ function downloadDataUrl(filename: string, dataUrl: string) {
   a.remove()
 }
 
-async function loadImage(url: string): Promise<HTMLImageElement> {
-  return await new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error(`Failed to load image: ${url}`))
-    img.src = url
-  })
-}
-
 async function screenshotWithCaption(
   viewer: Viewer,
   captionLines: string[],
-  opts?: { watermark?: string; frameUrls?: string[] },
+  opts?: { watermark?: string },
 ): Promise<string> {
   // Ensure custom fonts are loaded before rendering canvas text (especially on first use).
   try {
@@ -258,19 +249,41 @@ async function screenshotWithCaption(
   ctx.fillText(wm, w - pad - tw, h + pad)
   ctx.globalAlpha = 1
 
-  // Optional PNG frame overlay (random) as the TOP layer (so it isn't covered by the footer).
-  // Put your two files here:
-  // - public/frames/frame-1.png
-  // - public/frames/frame-2.png
-  // The PNG should have transparency in the middle.
-  try {
-    const frames = (opts?.frameUrls?.length ? opts.frameUrls : ['/frames/frame-1.png', '/frames/frame-2.png']) as string[]
-    const frameUrl = frames[Math.floor(Math.random() * frames.length)]
-    const frameImg = await loadImage(frameUrl)
-    ctx.drawImage(frameImg, 0, 0, out.width, out.height)
-  } catch {
-    // ignore and keep built-in frame
-  }
+  // Subtle edge frame (doesn't cover the image)
+  const fp = Math.max(10, Math.floor(Math.min(w, h) * 0.012))
+  const rx = Math.max(14, Math.floor(Math.min(w, h) * 0.018))
+  ctx.save()
+  // soft vignette
+  const vignette = ctx.createRadialGradient(w * 0.5, h * 0.45, Math.min(w, h) * 0.15, w * 0.5, h * 0.45, Math.max(w, h) * 0.7)
+  vignette.addColorStop(0, 'rgba(0,0,0,0)')
+  vignette.addColorStop(1, 'rgba(0,0,0,0.35)')
+  ctx.fillStyle = vignette
+  ctx.fillRect(0, 0, w, h)
+  // thin rounded border (gradient)
+  const strokeGrad = ctx.createLinearGradient(0, 0, w, h)
+  strokeGrad.addColorStop(0, 'rgba(103,231,255,0.55)')
+  strokeGrad.addColorStop(1, 'rgba(255,196,103,0.45)')
+  ctx.strokeStyle = strokeGrad
+  ctx.lineWidth = Math.max(2, Math.floor(fp * 0.22))
+  ctx.beginPath()
+  // rounded rect path
+  const x0 = fp
+  const y0 = fp
+  const x1 = w - fp
+  const y1 = h - fp
+  const r2 = Math.min(rx, (x1 - x0) / 2, (y1 - y0) / 2)
+  ctx.moveTo(x0 + r2, y0)
+  ctx.lineTo(x1 - r2, y0)
+  ctx.quadraticCurveTo(x1, y0, x1, y0 + r2)
+  ctx.lineTo(x1, y1 - r2)
+  ctx.quadraticCurveTo(x1, y1, x1 - r2, y1)
+  ctx.lineTo(x0 + r2, y1)
+  ctx.quadraticCurveTo(x0, y1, x0, y1 - r2)
+  ctx.lineTo(x0, y0 + r2)
+  ctx.quadraticCurveTo(x0, y0, x0 + r2, y0)
+  ctx.closePath()
+  ctx.stroke()
+  ctx.restore()
 
   return out.toDataURL('image/png')
 }
