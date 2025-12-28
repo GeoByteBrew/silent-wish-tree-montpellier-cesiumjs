@@ -1519,24 +1519,16 @@ async function init() {
   // Store per-light local position in MODEL space (not ECEF). The collection's modelMatrix will be set to treeModel.modelMatrix.
   const lights: Array<{ localPos: Cartesian3; billboard: Billboard }> = []
 
-  const computeTreeUpAxis = (): Cartesian3 | null => {
-    try {
-      if (!treeModel) return null
-      const treeWorld = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
-      // ECEF "up" at this location (local ENU up) so sprites don't look like they lie down when camera pitches.
-      return viewer.scene.globe.ellipsoid.geodeticSurfaceNormal(treeWorld, new Cartesian3())
-    } catch {
-      return null
-    }
-  }
-
   const rebuildLights = () => {
     lightsCollection.removeAll()
     lights.length = 0
     if (!treeModel || !lightAnchors.length || !lightSprite) return
     // Attach the whole collection to the tree. Billboards positions are interpreted in collection local space.
     lightsCollection.modelMatrix = Matrix4.clone(treeModel.modelMatrix, new Matrix4())
-    const upAxis = computeTreeUpAxis()
+    // IMPORTANT:
+    // Our billboard positions are in the tree MODEL space (glTF space). So the alignedAxis must also be in that space.
+    // glTF is Y-up by convention, and Cesium's Model keeps that convention internally.
+    const upAxis = Cartesian3.UNIT_Y
     for (const a of lightAnchors) {
       // a.matrix is in glTF model space; its translation is the anchor point in model coordinates.
       const localPos = Matrix4.getTranslation(a.matrix, new Cartesian3())
@@ -1553,7 +1545,7 @@ async function init() {
         translucencyByDistance: new NearFarScalar(20, 1.0, 400, 0.0),
         scaleByDistance: new NearFarScalar(20, 1.0, 400, 0.35),
       })
-      if (upAxis) b.alignedAxis = upAxis
+      b.alignedAxis = upAxis
       lights.push({ localPos, billboard: b })
     }
   }
@@ -1562,10 +1554,8 @@ async function init() {
     if (!treeModel) return
     // Only update the collection transform; individual billboards stay in model space.
     lightsCollection.modelMatrix = Matrix4.clone(treeModel.modelMatrix, new Matrix4())
-    const upAxis = computeTreeUpAxis()
-    if (upAxis) {
-      for (const l of lights) l.billboard.alignedAxis = upAxis
-    }
+    const upAxis = Cartesian3.UNIT_Y
+    for (const l of lights) l.billboard.alignedAxis = upAxis
   }
 
   const getParisMinutesOfDay = () => {
