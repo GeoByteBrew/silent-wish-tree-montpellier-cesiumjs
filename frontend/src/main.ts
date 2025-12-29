@@ -10,10 +10,8 @@ import {
   IonResource,
   Math as CesiumMath,
   Matrix4,
-  Billboard,
   BillboardCollection,
   Model,
-  NearFarScalar,
   Quaternion,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -38,10 +36,6 @@ const I18N: Record<Lang, Record<string, string>> = {
     camera: 'Caméra',
     camCity: 'Ville',
     camTree: 'Arbre',
-    lights: 'Guirlande',
-    lightsAuto: 'Auto',
-    lightsOn: 'On',
-    lightsOff: 'Off',
     errorMissing: 'Ajoute un vœu et complète le captcha.',
     errorServer: 'Erreur serveur. Réessaie.',
     reveal: 'Révélation',
@@ -62,10 +56,6 @@ const I18N: Record<Lang, Record<string, string>> = {
     camera: 'Camera',
     camCity: 'City',
     camTree: 'Tree',
-    lights: 'Lights',
-    lightsAuto: 'Auto',
-    lightsOn: 'On',
-    lightsOff: 'Off',
     errorMissing: 'Please write a wish and complete the captcha.',
     errorServer: 'Server error. Try again.',
     reveal: 'Reveal',
@@ -491,7 +481,7 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url)
 }
 
-// ---- GLB anchor helpers (read Orn.* / Light.* empties exported from Blender) ----
+// ---- GLB anchor helpers (read Orn.* empties exported from Blender) ----
 type GltfV2 = {
   scene?: number
   scenes?: Array<{ nodes?: number[] }>
@@ -581,12 +571,8 @@ async function init() {
   let turnstileWidgetId: string | null = null
 
   const clientId = createClientId()
-  type LightsMode = 'auto' | 'on' | 'off'
-  let lightsMode: LightsMode = ((localStorage.getItem('silentwish_lightsMode') as LightsMode) || 'auto') as LightsMode
   const DEBUG_MODE =
     new URLSearchParams(window.location.search).get('debug') === '1' || window.location.hostname === 'localhost'
-  const DEBUG_LIGHTS_STATUS =
-    DEBUG_MODE && new URLSearchParams(window.location.search).get('debugLights') === '1'
   let defaultLayout: LayoutV1 | null = null
 
   $('#app').innerHTML = `
@@ -668,19 +654,6 @@ async function init() {
           }
         </div>
 
-        <div class="section">
-          <div class="label-row">
-            <div class="label" id="lightsLabel"></div>
-          </div>
-          <div class="row">
-            <div class="segmented" id="lightsSeg">
-              <button class="seg" id="lightsAutoBtn" type="button"></button>
-              <button class="seg" id="lightsOnBtn" type="button"></button>
-              <button class="seg" id="lightsOffBtn" type="button"></button>
-            </div>
-          </div>
-        </div>
-
         ${
           DEBUG_MODE
             ? `<div class="section">
@@ -692,6 +665,10 @@ async function init() {
             <button class="secondary" id="importLayoutBtn" type="button">Import</button>
             <button class="secondary" id="loadDefaultLayoutBtn" type="button">Default</button>
             <button class="ghost" id="resetLayoutBtn" type="button">Reset</button>
+            <button class="secondary" id="previewLightAnchorBtn" type="button">Preview Light anchor</button>
+            <button class="ghost" id="clearLightPreviewBtn" type="button">Clear preview</button>
+            <button class="secondary" id="attachAnchorBallsBtn" type="button">Attach anchor balls</button>
+            <button class="ghost" id="clearAnchorBallsBtn" type="button">Clear balls</button>
           </div>
           <div class="muted" style="font-size:12px;margin-top:8px">
             Export creates a JSON of your current tweaks. Import applies it. Reset clears local tweaks.
@@ -939,10 +916,6 @@ async function init() {
     ;($('#camLabel') as HTMLDivElement).textContent = t('camera')
     ;($('#camCityBtn') as HTMLButtonElement).textContent = t('camCity')
     ;($('#camTreeBtn') as HTMLButtonElement).textContent = t('camTree')
-    ;($('#lightsLabel') as HTMLDivElement).textContent = t('lights')
-    ;($('#lightsAutoBtn') as HTMLButtonElement).textContent = t('lightsAuto')
-    ;($('#lightsOnBtn') as HTMLButtonElement).textContent = t('lightsOn')
-    ;($('#lightsOffBtn') as HTMLButtonElement).textContent = t('lightsOff')
     ;($('#revealBtn') as HTMLButtonElement).textContent = t('reveal')
 
     ;($('#langFr') as HTMLButtonElement).classList.toggle('active', lang === 'fr')
@@ -981,21 +954,6 @@ async function init() {
 
   renderTexts()
   renderOrnaments()
-
-  const renderLightsControls = () => {
-    ;($('#lightsAutoBtn') as HTMLButtonElement).classList.toggle('active', lightsMode === 'auto')
-    ;($('#lightsOnBtn') as HTMLButtonElement).classList.toggle('active', lightsMode === 'on')
-    ;($('#lightsOffBtn') as HTMLButtonElement).classList.toggle('active', lightsMode === 'off')
-  }
-  const setLightsMode = (m: LightsMode) => {
-    lightsMode = m
-    localStorage.setItem('silentwish_lightsMode', m)
-    renderLightsControls()
-  }
-  ;($('#lightsAutoBtn') as HTMLButtonElement).onclick = () => setLightsMode('auto')
-  ;($('#lightsOnBtn') as HTMLButtonElement).onclick = () => setLightsMode('on')
-  ;($('#lightsOffBtn') as HTMLButtonElement).onclick = () => setLightsMode('off')
-  renderLightsControls()
 
   // Cesium init
   if (!env.ionToken) {
@@ -1465,7 +1423,7 @@ async function init() {
 
   // Load Orn.* anchors from the tree model (if available). This makes ornaments land exactly where you placed them in Blender.
   let ornAnchors: Array<{ name: string; matrix: Matrix4 }> = []
-  // Load Light.* anchors (for tree lights)
+  // Debug-only: load Light.* anchors so we can preview ornaments attached to light anchors.
   let lightAnchors: Array<{ name: string; matrix: Matrix4 }> = []
   const anchorSourceUrl =
     loadedTreeUrl && loadedTreeUrl.endsWith('.glb')
@@ -1480,15 +1438,17 @@ async function init() {
     } catch (e) {
       setStatus(`Failed to read anchors from ${anchorSourceUrl}: ${e instanceof Error ? e.message : String(e)}`)
     }
-    try {
-      lightAnchors = await loadAnchorMatrices(anchorSourceUrl, 'Light.')
-      if (lightAnchors.length) setStatus(`Loaded ${lightAnchors.length} light anchors from ${anchorSourceUrl}.`)
-    } catch {
-      // ignore (lights are optional)
+    if (DEBUG_MODE) {
+      try {
+        lightAnchors = await loadAnchorMatrices(anchorSourceUrl, 'Light.')
+        if (lightAnchors.length) setStatus(`Loaded ${lightAnchors.length} light anchors from ${anchorSourceUrl}.`)
+      } catch {
+        // ignore
+      }
     }
   }
 
-  // Keep ornaments + lights attached to the main tree, even if the tree modelMatrix gets updated after placement.
+  // Keep ornaments attached to the main tree, even if the tree modelMatrix gets updated after placement.
   type LocalOrnInstance = { model: Model; anchorMatrix: Matrix4 }
   const localOrnaments: LocalOrnInstance[] = []
   const recomputeLocalOrnaments = () => {
@@ -1498,115 +1458,119 @@ async function init() {
     }
   }
 
-  // Lights: simple glowing billboards positioned at Light.* anchors.
-  const makeGlowDataUrl = (size = 128) => {
-    const c = document.createElement('canvas')
-    c.width = size
-    c.height = size
-    const ctx = c.getContext('2d')
-    if (!ctx) return ''
-    ctx.clearRect(0, 0, size, size)
-    const g = ctx.createRadialGradient(size * 0.5, size * 0.5, size * 0.08, size * 0.5, size * 0.5, size * 0.5)
-    g.addColorStop(0, 'rgba(255,235,180,1.0)')
-    g.addColorStop(0.25, 'rgba(255,220,140,0.85)')
-    g.addColorStop(1, 'rgba(255,200,120,0.0)')
-    ctx.fillStyle = g
-    ctx.beginPath()
-    ctx.arc(size * 0.5, size * 0.5, size * 0.5, 0, Math.PI * 2)
-    ctx.fill()
-    return c.toDataURL('image/png')
-  }
-
-  const lightsCollection = new BillboardCollection()
-  viewer.scene.primitives.add(lightsCollection)
-  const lightSprite = makeGlowDataUrl(128)
-  // Store per-light local position in MODEL space (not ECEF). The collection's modelMatrix will be set to treeModel.modelMatrix.
-  const lights: Array<{ localPos: Cartesian3; billboard: Billboard }> = []
-
-  const rebuildLights = () => {
-    lightsCollection.removeAll()
-    lights.length = 0
-    if (!treeModel || !lightAnchors.length || !lightSprite) return
-    // Attach the whole collection to the tree. Billboards positions are interpreted in collection local space.
-    lightsCollection.modelMatrix = Matrix4.clone(treeModel.modelMatrix, new Matrix4())
-    // IMPORTANT:
-    // Our billboard positions are in the tree MODEL space (glTF space). So the alignedAxis must also be in that space.
-    // glTF is Y-up by convention, and Cesium's Model keeps that convention internally.
-    const upAxis = Cartesian3.UNIT_Y
-    for (const a of lightAnchors) {
-      // a.matrix is in glTF model space; its translation is the anchor point in model coordinates.
-      const localPos = Matrix4.getTranslation(a.matrix, new Cartesian3())
-      const b = lightsCollection.add({
-        position: localPos,
-        image: lightSprite,
-        width: 26,
-        height: 26,
-        color: Color.WHITE.withAlpha(0.0),
-        // Keep visible but not "UI-stuck":
-        // - let depth test happen at close range
-        // - fade/scale with distance
-        disableDepthTestDistance: 180,
-        translucencyByDistance: new NearFarScalar(20, 1.0, 400, 0.0),
-        scaleByDistance: new NearFarScalar(20, 1.0, 400, 0.35),
-      })
-      b.alignedAxis = upAxis
-      lights.push({ localPos, billboard: b })
+  // Debug-only: preview ornaments at Light.* anchors (answers: “is it on the tree or floating outside?”)
+  const lightPreview: LocalOrnInstance[] = []
+  const clearLightPreview = () => {
+    const models = lightPreview.map((p) => p.model)
+    for (const p of lightPreview) {
+      try {
+        viewer.scene.primitives.remove(p.model)
+      } catch {
+        // ignore
+      }
     }
-  }
-
-  const recomputeLights = () => {
-    if (!treeModel) return
-    // Only update the collection transform; individual billboards stay in model space.
-    lightsCollection.modelMatrix = Matrix4.clone(treeModel.modelMatrix, new Matrix4())
-    const upAxis = Cartesian3.UNIT_Y
-    for (const l of lights) l.billboard.alignedAxis = upAxis
-  }
-
-  const getParisMinutesOfDay = () => {
-    const parts = new Intl.DateTimeFormat('fr-FR', {
-      timeZone: 'Europe/Paris',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(new Date())
-    const hh = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
-    const mm = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
-    return hh * 60 + mm
-  }
-
-  const updateLightsOnOff = () => {
-    // On from 17:00 to 07:00 (Europe/Paris)
-    const m = getParisMinutesOfDay()
-    const autoOn = m >= 17 * 60 || m < 7 * 60
-    const on = lightsMode === 'on' ? true : lightsMode === 'off' ? false : autoOn
-    const base = on ? 0.65 : 0.0
-    // subtle twinkle
-    const t = performance.now() / 1000
-    for (let i = 0; i < lights.length; i++) {
-      const tw = on ? 0.12 * Math.sin(t * 1.7 + i * 0.9) : 0
-      const a = Math.max(0, Math.min(1, base + tw))
-      lights[i].billboard.color = Color.WHITE.withAlpha(a)
+    // also remove from the shared list
+    for (let i = localOrnaments.length - 1; i >= 0; i--) {
+      if (models.includes(localOrnaments[i].model)) localOrnaments.splice(i, 1)
     }
+    lightPreview.length = 0
   }
-
-  // Debug aid: if lights appear to "follow the camera", we can verify they're actually tree-attached by checking distance stability.
-  // (We keep it quiet unless lightsMode === 'on'.)
-  let lastLightDebugAt = 0
-  const debugFirstLightDistance = () => {
-    if (!DEBUG_LIGHTS_STATUS) return
-    if (!treeModel || lightsMode !== 'on' || !lights.length) return
-    const now = performance.now()
-    if (now - lastLightDebugAt < 1500) return
-    lastLightDebugAt = now
+  let lightPreviewIdx = 0
+  const previewNextLightAnchor = async () => {
+    if (!DEBUG_MODE) return
+    if (!treeModel) {
+      setStatus('Preview: treeModel not ready yet.')
+      return
+    }
+    if (!lightAnchors.length) {
+      setStatus('Preview: no Light.* anchors found in tree2.glb.')
+      return
+    }
+    const idx = lightPreviewIdx++ % lightAnchors.length
+    const a = lightAnchors[idx]
+    const orn = ORNAMENTS.find((o) => o.id === selectedOrnament)
+    const file = orn?.file ?? selectedOrnament
+    const url = `/models/ornaments/${file}.glb`
     try {
-      const treePos = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
-      const first = lights[0]
-      const lightWorld = Matrix4.multiplyByPoint(lightsCollection.modelMatrix, first.localPos, new Cartesian3())
-      const d = Cartesian3.distance(treePos, lightWorld)
-      setStatus(`Lights debug: firstLight Δ=${d.toFixed(2)}m (should stay stable while moving camera)`)
-    } catch {
-      // ignore
+      const worldMatrix = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
+      const model = await Model.fromGltfAsync({
+        url,
+        modelMatrix: worldMatrix,
+        scale: 0.35,
+        minimumPixelSize: 24,
+        maximumScale: 10,
+      })
+      viewer.scene.primitives.add(model)
+      const inst = { model, anchorMatrix: a.matrix }
+      localOrnaments.push(inst)
+      lightPreview.push(inst)
+      setStatus(`Preview: placed ${file} on ${a.name} (#${idx}).`)
+    } catch (e) {
+      setStatus(`Preview failed: ${e instanceof Error ? e.message : String(e)}`)
     }
+  }
+
+  // Debug-only: draw quick "anchor balls" (points) on every anchor.
+  // - Orn.* anchors => blue
+  // - Light.* anchors => red
+  const anchorBallIds: string[] = []
+  const clearAnchorBalls = () => {
+    for (const id of anchorBallIds) {
+      const ent = viewer.entities.getById(id)
+      if (ent) viewer.entities.remove(ent)
+    }
+    anchorBallIds.length = 0
+  }
+  const attachAnchorBalls = () => {
+    if (!DEBUG_MODE) return
+    if (!treeModel) {
+      setStatus('Anchor balls: treeModel not ready yet.')
+      return
+    }
+    if (!ornAnchors.length && !lightAnchors.length) {
+      setStatus('Anchor balls: no anchors loaded.')
+      return
+    }
+    clearAnchorBalls()
+    const scratchLocal = new Cartesian3()
+    const scratchWorld = new Cartesian3()
+    const addBall = (id: string, anchorMatrix: Matrix4, color: Color) => {
+      const local = Matrix4.getTranslation(anchorMatrix, scratchLocal)
+      const world = Matrix4.multiplyByPoint(treeModel!.modelMatrix, local, scratchWorld)
+      viewer.entities.add({
+        id,
+        position: world,
+        point: {
+          pixelSize: 6,
+          color,
+          outlineColor: Color.BLACK.withAlpha(0.35),
+          outlineWidth: 1,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      })
+      anchorBallIds.push(id)
+    }
+
+    const blue = new Color(0.3, 0.7, 1.0, 0.9)
+    const red = new Color(1.0, 0.35, 0.35, 0.9)
+    for (let i = 0; i < ornAnchors.length; i++) addBall(`dbg:ornBall:${i}`, ornAnchors[i].matrix, blue)
+    for (let i = 0; i < lightAnchors.length; i++) addBall(`dbg:lightBall:${i}`, lightAnchors[i].matrix, red)
+    setStatus(
+      `Anchor balls attached: Orn.*=${ornAnchors.length} (blue), Light.*=${lightAnchors.length} (red).`,
+    )
+  }
+
+  // Wire debug buttons
+  if (DEBUG_MODE) {
+    const prevBtn = document.querySelector('#previewLightAnchorBtn') as HTMLButtonElement | null
+    const clearBtn = document.querySelector('#clearLightPreviewBtn') as HTMLButtonElement | null
+    if (prevBtn) prevBtn.onclick = () => void previewNextLightAnchor()
+    if (clearBtn) clearBtn.onclick = () => clearLightPreview()
+
+    const attachBtn = document.querySelector('#attachAnchorBallsBtn') as HTMLButtonElement | null
+    const clearBallsBtn = document.querySelector('#clearAnchorBallsBtn') as HTMLButtonElement | null
+    if (attachBtn) attachBtn.onclick = () => attachAnchorBalls()
+    if (clearBallsBtn) clearBallsBtn.onclick = () => clearAnchorBalls()
   }
 
   // ---- Main tree live edit (XY/scale/heading/ground trim) ----
@@ -1654,7 +1618,7 @@ async function init() {
     treeModel.modelMatrix = m
     // Keep attached objects aligned with the tree after any modelMatrix update.
     recomputeLocalOrnaments()
-    recomputeLights()
+    // lights removed
 
     if (DEBUG_MODE) {
       setStoredNumber(mainKey.e, mainEast)
@@ -1676,16 +1640,6 @@ async function init() {
   if (treeModel) {
     void updateMainTreeModelMatrix({ resample: true })
   }
-
-  // Initialize lights once tree model is ready.
-  if (treeModel && lightAnchors.length) {
-    rebuildLights()
-  }
-  // Update lights each frame (time-based scheduler).
-  viewer.scene.preUpdate.addEventListener(() => {
-    updateLightsOnOff()
-    debugFirstLightDistance()
-  })
 
   const scheduleMainTreeResample = () => {
     if (!has3DTiles) return
