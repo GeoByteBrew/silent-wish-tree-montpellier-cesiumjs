@@ -1012,6 +1012,7 @@ async function init() {
   const scratchCamEnu = new Cartesian3()
   const scratchClampedEnu = new Cartesian3()
   const scratchClampedEcef = new Cartesian3()
+  let farHide = false
   viewer.scene.preUpdate.addEventListener(() => {
     try {
       // Avoid fighting camera flights
@@ -1032,14 +1033,48 @@ async function init() {
       const n = scratchCamEnu.y
       const h = scratchCamEnu.z
       const d = Math.hypot(e, n)
-      if (!Number.isFinite(d) || d <= CAMERA_LIMIT_RADIUS_M) return
+      if (!Number.isFinite(d)) return
 
-      const k = CAMERA_LIMIT_RADIUS_M / d
-      scratchClampedEnu.x = e * k
-      scratchClampedEnu.y = n * k
-      scratchClampedEnu.z = h
-      Matrix4.multiplyByPoint(scratchEnu, scratchClampedEnu, scratchClampedEcef)
-      viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
+      // Apply BOTH constraints every frame:
+      // - horizontal roam limit (350m)
+      // - height limit (<= 15m above the ENU origin) — robust even with 3D Tiles (no async sampling)
+      let changed = false
+      // horizontal clamp
+      if (d > CAMERA_LIMIT_RADIUS_M) {
+        const k = CAMERA_LIMIT_RADIUS_M / d
+        scratchClampedEnu.x = e * k
+        scratchClampedEnu.y = n * k
+        scratchClampedEnu.z = h
+        changed = true
+      } else {
+        scratchClampedEnu.x = e
+        scratchClampedEnu.y = n
+        scratchClampedEnu.z = h
+      }
+      // height clamp (requested: max 15m above ground; we approximate with ENU Up around the tree center)
+      if (scratchClampedEnu.z > 15) {
+        scratchClampedEnu.z = 15
+        changed = true
+      }
+      if (changed) {
+        Matrix4.multiplyByPoint(scratchEnu, scratchClampedEnu, scratchClampedEcef)
+        viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
+      }
+
+      // Visibility rule: if camera is >10m horizontally from the tree, hide ornaments and light halos.
+      // Use horizontal distance (d) so small height changes don't flicker.
+      const nextFar = d > 10
+      if (nextFar !== farHide) {
+        farHide = nextFar
+        // Hide/show ornaments
+        for (const o of localOrnaments) o.model.show = !farHide
+        // Hide/show light halos (keep cores visible)
+        for (const l of localLights) {
+          if (!l.id.includes(':halo:')) continue
+          const ent = viewer.entities.getById(l.id)
+          if (ent?.point) (ent.point as any).show = new ConstantProperty(!farHide)
+        }
+      }
     } catch {
       // ignore
     }
@@ -1616,7 +1651,8 @@ async function init() {
     // - halo color: 40% lighter (move toward white)
     const warmCore = new Color(1.0, 0.9, 0.65, 0.95)
     const haloRgb = { r: 1.0, g: 0.9 + (1.0 - 0.9) * 0.4, b: 0.65 + (1.0 - 0.65) * 0.4 } // => (1, 0.94, 0.79)
-    const warmHalo = new Color(haloRgb.r, haloRgb.g, haloRgb.b, 0.22)
+    // Halo should be lighter/subtler: reduce opacity by 50%
+    const warmHalo = new Color(haloRgb.r, haloRgb.g, haloRgb.b, 0.11)
 
     for (let i = 0; i < enabledLightNames.length; i++) {
       const name = enabledLightNames[i]
@@ -1676,7 +1712,8 @@ async function init() {
           if (!c || !meta || typeof c.setValue !== 'function') continue
           const s = 0.6 + 0.4 * Math.pow(0.5 + 0.5 * Math.sin(t * meta.speed + meta.phase), 2)
           if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, 0.75 + 0.25 * s))
-          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, 0.12 + 0.22 * s))
+          // Halo twinkle opacity reduced by 50% as well.
+          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, 0.06 + 0.11 * s))
         }
       })
     }
