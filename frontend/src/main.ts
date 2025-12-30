@@ -2427,20 +2427,9 @@ async function init() {
     const url = `/models/ornaments/${file}.glb`
 
     // Some ornament exports end up “lying sideways”.
-    // We apply a fixed tilt WITHOUT changing the anchor translation:
-    // decompose anchor matrix into (R, t) and rebuild with (R * fixR, t).
-    //
-    // Make the axis tunable via URL so we can quickly match the model:
-    //   ?ornAxis=x|y|z  (default: y)
-    //   ?ornDeg=-90     (default: -90)
-    const ORNAMENT_TILT_FIX_DEG = getNumberParam('ornDeg') ?? -90
-    const ORNAMENT_TILT_AXIS = (getStringParam('ornAxis') ?? 'y').toLowerCase()
-    const ornamentTiltFixRot =
-      ORNAMENT_TILT_AXIS === 'x'
-        ? Matrix3.fromRotationX(CesiumMath.toRadians(ORNAMENT_TILT_FIX_DEG), new Matrix3())
-        : ORNAMENT_TILT_AXIS === 'z'
-          ? Matrix3.fromRotationZ(CesiumMath.toRadians(ORNAMENT_TILT_FIX_DEG), new Matrix3())
-          : Matrix3.fromRotationY(CesiumMath.toRadians(ORNAMENT_TILT_FIX_DEG), new Matrix3())
+    // In this project we already had to apply an X -90° correction on the tree in Blender,
+    // so ornaments need the same axis correction to hang upright.
+    const ornamentTiltFixRot = Matrix3.fromRotationX(CesiumMath.toRadians(-90), new Matrix3())
 
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
