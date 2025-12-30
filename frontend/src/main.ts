@@ -11,6 +11,7 @@ import {
   IonImageryProvider,
   IonResource,
   Math as CesiumMath,
+  Matrix3,
   Matrix4,
   NearFarScalar,
   BillboardCollection,
@@ -1574,6 +1575,8 @@ async function init() {
   // “Light.*” anchors: render as glowing bulbs (points) attached to the tree.
   type LocalLightInstance = { id: string; anchorMatrix: Matrix4 }
   const localLights: LocalLightInstance[] = []
+  let lightsPhases = new Map<string, { phase: number; speed: number }>()
+  let lightsTwinkleHooked = false
   const recomputeLocalLights = () => {
     if (!treeModel) return
     for (const l of localLights) {
@@ -1603,10 +1606,20 @@ async function init() {
     const scaleByDistance = new NearFarScalar(80, 1.0, 900, 0.35)
     const haloScaleByDistance = new NearFarScalar(80, 1.2, 900, 0.4)
 
+    // Disable a couple of problematic anchors (requested).
+    // Be tolerant of suffixes like "Light.44.001" and leading zeros.
+    const isLightIndex = (name: string, n: number) => new RegExp(`^Light\\.0*${n}(?:$|\\.)`).test(name)
+    const enabledLightNames = lightAnchorNames.filter((n) => !isLightIndex(n, 44) && !isLightIndex(n, 45))
+
+    // Requested tweaks:
+    // - core size: -30%
+    // - halo color: 40% lighter (move toward white)
     const warmCore = new Color(1.0, 0.9, 0.65, 0.95)
-    const warmHalo = new Color(1.0, 0.9, 0.65, 0.22)
-    for (let i = 0; i < lightAnchorNames.length; i++) {
-      const name = lightAnchorNames[i]
+    const haloRgb = { r: 1.0, g: 0.9 + (1.0 - 0.9) * 0.4, b: 0.65 + (1.0 - 0.65) * 0.4 } // => (1, 0.94, 0.79)
+    const warmHalo = new Color(haloRgb.r, haloRgb.g, haloRgb.b, 0.22)
+
+    for (let i = 0; i < enabledLightNames.length; i++) {
+      const name = enabledLightNames[i]
       const rel = getNodeAnchorRelativeToModelMatrix(name)
       if (!rel) continue
       const world = Matrix4.multiply(treeModel.modelMatrix, rel, new Matrix4())
@@ -1618,7 +1631,7 @@ async function init() {
         id: coreId,
         position: pos,
         point: {
-          pixelSize: 6,
+          pixelSize: 4.2,
           color: new ConstantProperty(warmCore),
           outlineColor: new ConstantProperty(Color.WHITE.withAlpha(0.18)),
           outlineWidth: 1,
@@ -1645,28 +1658,30 @@ async function init() {
     }
 
     // Gentle twinkle (keeps it lively without “billboard lying down” issues).
-    const phases = new Map<string, { phase: number; speed: number }>()
-    for (let i = 0; i < lightAnchorNames.length; i++) {
-      phases.set(`treeLight:core:${i}`, { phase: i * 0.73, speed: 0.9 + (i % 7) * 0.05 })
-      phases.set(`treeLight:halo:${i}`, { phase: i * 0.73 + 1.2, speed: 0.85 + (i % 7) * 0.05 })
+    lightsPhases = new Map<string, { phase: number; speed: number }>()
+    for (let i = 0; i < enabledLightNames.length; i++) {
+      lightsPhases.set(`treeLight:core:${i}`, { phase: i * 0.73, speed: 0.9 + (i % 7) * 0.05 })
+      lightsPhases.set(`treeLight:halo:${i}`, { phase: i * 0.73 + 1.2, speed: 0.85 + (i % 7) * 0.05 })
     }
-    const t0 = performance.now()
-    const twinkleCb = () => {
-      const t = (performance.now() - t0) / 1000
-      for (const l of localLights) {
-        const ent = viewer.entities.getById(l.id)
-        const g = ent?.point as any
-        const c = g?.color
-        const meta = phases.get(l.id)
-        if (!c || !meta || typeof c.setValue !== 'function') continue
-        const s = 0.6 + 0.4 * Math.pow(0.5 + 0.5 * Math.sin(t * meta.speed + meta.phase), 2)
-        if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, 0.75 + 0.25 * s))
-        else c.setValue(new Color(1.0, 0.9, 0.65, 0.12 + 0.22 * s))
-      }
+    if (!lightsTwinkleHooked) {
+      lightsTwinkleHooked = true
+      const t0 = performance.now()
+      viewer.scene.preUpdate.addEventListener(() => {
+        const t = (performance.now() - t0) / 1000
+        for (const l of localLights) {
+          const ent = viewer.entities.getById(l.id)
+          const g = ent?.point as any
+          const c = g?.color
+          const meta = lightsPhases.get(l.id)
+          if (!c || !meta || typeof c.setValue !== 'function') continue
+          const s = 0.6 + 0.4 * Math.pow(0.5 + 0.5 * Math.sin(t * meta.speed + meta.phase), 2)
+          if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, 0.75 + 0.25 * s))
+          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, 0.12 + 0.22 * s))
+        }
+      })
     }
-    viewer.scene.preUpdate.addEventListener(twinkleCb)
 
-    setStatus(`Lights enabled: ${Math.floor(localLights.length / 2)} bulbs.`)
+    setStatus(`Lights enabled: ${Math.floor(localLights.length / 2)} bulbs (excluded: Light.44, Light.45).`)
   }
 
   // Compute a node's WORLD matrix using Cesium runtime nodes, so it matches the rendered mesh exactly.
@@ -2411,6 +2426,22 @@ async function init() {
     const file = orn?.file ?? ornamentId
     const url = `/models/ornaments/${file}.glb`
 
+    // Some ornament exports end up “lying sideways”.
+    // We apply a fixed tilt WITHOUT changing the anchor translation:
+    // decompose anchor matrix into (R, t) and rebuild with (R * fixR, t).
+    //
+    // Make the axis tunable via URL so we can quickly match the model:
+    //   ?ornAxis=x|y|z  (default: y)
+    //   ?ornDeg=-90     (default: -90)
+    const ORNAMENT_TILT_FIX_DEG = getNumberParam('ornDeg') ?? -90
+    const ORNAMENT_TILT_AXIS = (getStringParam('ornAxis') ?? 'y').toLowerCase()
+    const ornamentTiltFixRot =
+      ORNAMENT_TILT_AXIS === 'x'
+        ? Matrix3.fromRotationX(CesiumMath.toRadians(ORNAMENT_TILT_FIX_DEG), new Matrix3())
+        : ORNAMENT_TILT_AXIS === 'z'
+          ? Matrix3.fromRotationZ(CesiumMath.toRadians(ORNAMENT_TILT_FIX_DEG), new Matrix3())
+          : Matrix3.fromRotationY(CesiumMath.toRadians(ORNAMENT_TILT_FIX_DEG), new Matrix3())
+
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
     let worldMatrix: Matrix4 | null = null
@@ -2422,7 +2453,11 @@ async function init() {
         setStatus(`Ornament: node not ready/unavailable: ${name}`)
         return
       }
-      anchorMatrix = rel
+      // Decompose rel = [R | t], then rebuild [R * fix | t]
+      const t = Matrix4.getTranslation(rel, new Cartesian3())
+      const r = Matrix4.getRotation(rel, new Matrix3())
+      const rFixed = Matrix3.multiply(r, ornamentTiltFixRot, new Matrix3())
+      anchorMatrix = Matrix4.fromRotationTranslation(rFixed, t, new Matrix4())
       worldMatrix = Matrix4.multiply(treeModel.modelMatrix, anchorMatrix, new Matrix4())
     } else if (treeModel) {
       // Fallback: drop near tree (kept as backup)
@@ -2433,7 +2468,10 @@ async function init() {
       const height = 10 + ((anchorIndex % 25) / 25) * 14
       const offset = new Cartesian3(radius * Math.cos(angle), radius * Math.sin(angle), height)
       const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
-      worldMatrix = Matrix4.fromTranslation(pos)
+      // Fallback: we don't have an anchor rotation, so just tilt in ENU space at the ornament position.
+      const base = Matrix4.fromTranslation(pos, new Matrix4())
+      const rot4 = Matrix4.fromRotationTranslation(ornamentTiltFixRot, Cartesian3.ZERO, new Matrix4())
+      worldMatrix = Matrix4.multiply(base, rot4, new Matrix4())
     }
     try {
       if (!worldMatrix) return
@@ -2513,6 +2551,8 @@ async function init() {
   // After initial tree + anchors are ready, load globally persisted ornaments for everyone.
   // (Safe to call multiple times; we dedupe by wish id.)
   void loadExistingOrnaments()
+  // Keep refreshing so other users' ornaments appear (simple polling).
+  setInterval(() => void loadExistingOrnaments(), 15_000)
 
   ;($('#revealBtn') as HTMLButtonElement).onclick = async () => {
     // Open the reveal page (it will handle "not yet" gating via the backend).
