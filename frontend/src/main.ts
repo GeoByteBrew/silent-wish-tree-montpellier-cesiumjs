@@ -1012,6 +1012,8 @@ async function init() {
   const scratchCamEnu = new Cartesian3()
   const scratchClampedEnu = new Cartesian3()
   const scratchClampedEcef = new Cartesian3()
+  const scratchCamCarto = new Cartographic()
+  const scratchCamFixed = new Cartesian3()
   let farHide = false
   viewer.scene.preUpdate.addEventListener(() => {
     try {
@@ -1051,19 +1053,34 @@ async function init() {
         scratchClampedEnu.y = n
         scratchClampedEnu.z = h
       }
-      // height clamp (requested: max 15m above ground; we approximate with ENU Up around the tree center)
-      if (scratchClampedEnu.z > 15) {
-        scratchClampedEnu.z = 15
-        changed = true
-      }
       if (changed) {
         Matrix4.multiplyByPoint(scratchEnu, scratchClampedEnu, scratchClampedEcef)
         viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
       }
 
-      // Visibility rule: if camera is >10m horizontally from the tree, hide ornaments and light halos.
+      // Camera height clamp (requested):
+      // - max 50m above ground
+      // - never go below ground
+      const camCarto = viewer.scene.globe.ellipsoid.cartesianToCartographic(viewer.camera.position, scratchCamCarto)
+      if (camCarto) {
+        const ground = viewer.scene.globe.getHeight(camCarto) ?? 0
+        const minAbove = 0.5
+        const maxAbove = 50
+        const minH = ground + minAbove
+        const maxH = ground + maxAbove
+        if (Number.isFinite(camCarto.height)) {
+          const clamped = Math.min(Math.max(camCarto.height, minH), maxH)
+          if (clamped !== camCarto.height) {
+            camCarto.height = clamped
+            const fixed = viewer.scene.globe.ellipsoid.cartographicToCartesian(camCarto, scratchCamFixed)
+            if (fixed) viewer.camera.position = Cartesian3.clone(fixed, viewer.camera.position)
+          }
+        }
+      }
+
+      // Visibility rule: if camera is >25m horizontally from the tree, hide ornaments and light halos.
       // Use horizontal distance (d) so small height changes don't flicker.
-      const nextFar = d > 10
+      const nextFar = d > 25
       if (nextFar !== farHide) {
         farHide = nextFar
         // Hide/show ornaments
@@ -1073,6 +1090,13 @@ async function init() {
           if (!l.id.includes(':halo:')) continue
           const ent = viewer.entities.getById(l.id)
           if (ent?.point) (ent.point as any).show = new ConstantProperty(!farHide)
+        }
+        // Also hide debug anchor balls if they are attached
+        for (const ent of viewer.entities.values) {
+          const id = (ent as any)?.id
+          if (typeof id === 'string' && id.startsWith('dbg:') && ent.point) {
+            ;(ent.point as any).show = new ConstantProperty(!farHide)
+          }
         }
       }
     } catch {
