@@ -481,7 +481,7 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url)
 }
 
-// ---- GLB anchor helpers (read Orn.* empties exported from Blender) ----
+// ---- GLB anchor helpers (read Orn.* / Light.* node names exported from Blender) ----
 type GltfV2 = {
   scene?: number
   scenes?: Array<{ nodes?: number[] }>
@@ -535,14 +535,14 @@ async function fetchGltfJsonFromGlb(glbUrl: string): Promise<GltfV2> {
   throw new Error('GLB JSON chunk not found')
 }
 
-async function loadAnchorMatrices(glbUrl: string, prefix: string): Promise<Array<{ name: string; matrix: Matrix4 }>> {
+async function loadAnchorNames(glbUrl: string, prefix: string): Promise<string[]> {
   const gltf = await fetchGltfJsonFromGlb(glbUrl)
   const nodes = gltf.nodes ?? []
   if (!nodes.length) return []
 
   const sceneIndex = typeof gltf.scene === 'number' ? gltf.scene : 0
   const roots = gltf.scenes?.[sceneIndex]?.nodes ?? []
-  const results: Array<{ name: string; matrix: Matrix4 }> = []
+  const results: string[] = []
 
   const walk = (idx: number, parent: Matrix4) => {
     const n = nodes[idx]
@@ -550,7 +550,9 @@ async function loadAnchorMatrices(glbUrl: string, prefix: string): Promise<Array
     const local = matrixFromGltfNode(n)
     const world = Matrix4.multiply(parent, local, new Matrix4())
     if (n.name && n.name.startsWith(prefix)) {
-      results.push({ name: n.name, matrix: world })
+      // We only return the name. The actual placement uses Cesium runtime node transforms (computedTransform)
+      // to match the rendered model exactly.
+      results.push(n.name)
     }
     const kids = n.children ?? []
     for (const k of kids) walk(k, world)
@@ -560,7 +562,7 @@ async function loadAnchorMatrices(glbUrl: string, prefix: string): Promise<Array
   for (const r of roots) walk(r, I)
 
   // Stable ordering: Orn.0000... so modulo mapping stays consistent.
-  results.sort((a, b) => a.name.localeCompare(b.name, 'en'))
+  results.sort((a, b) => a.localeCompare(b, 'en'))
   return results
 }
 
@@ -969,6 +971,9 @@ async function init() {
 
   Ion.defaultAccessToken = env.ionToken
 
+  // We'll set this once the tree is loaded; used for camera limits + debug.
+  let treeModel: Model | null = null
+
   const viewer = new Viewer('cesium', {
     animation: false,
     baseLayerPicker: false,
@@ -981,6 +986,48 @@ async function init() {
     navigationHelpButton: false,
     fullscreenButton: false,
     shouldAnimate: true,
+  })
+
+  // Camera roam limit: keep the camera within a horizontal radius around the main tree.
+  // Requested: 350m.
+  const CAMERA_LIMIT_RADIUS_M = 350
+  const scratchCenter = new Cartesian3()
+  const scratchEnu = new Matrix4()
+  const scratchInvEnu = new Matrix4()
+  const scratchCamEnu = new Cartesian3()
+  const scratchClampedEnu = new Cartesian3()
+  const scratchClampedEcef = new Cartesian3()
+  viewer.scene.preUpdate.addEventListener(() => {
+    try {
+      // Avoid fighting camera flights
+      const camAny = viewer.camera as any
+      if (camAny?._currentFlight) return
+
+      // Dynamic center: actual tree model position if available, else camera focus point.
+      const center = treeModel
+        ? Matrix4.getTranslation(treeModel.modelMatrix, scratchCenter)
+        : Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0, scratchCenter)
+
+      Matrix4.clone(Transforms.eastNorthUpToFixedFrame(center), scratchEnu)
+      Matrix4.inverse(scratchEnu, scratchInvEnu)
+
+      // Camera position in ENU frame
+      Matrix4.multiplyByPoint(scratchInvEnu, viewer.camera.position, scratchCamEnu)
+      const e = scratchCamEnu.x
+      const n = scratchCamEnu.y
+      const h = scratchCamEnu.z
+      const d = Math.hypot(e, n)
+      if (!Number.isFinite(d) || d <= CAMERA_LIMIT_RADIUS_M) return
+
+      const k = CAMERA_LIMIT_RADIUS_M / d
+      scratchClampedEnu.x = e * k
+      scratchClampedEnu.y = n * k
+      scratchClampedEnu.z = h
+      Matrix4.multiplyByPoint(scratchEnu, scratchClampedEnu, scratchClampedEcef)
+      viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
+    } catch {
+      // ignore
+    }
   })
 
   viewer.scene.globe.show = !has3DTiles
@@ -1191,7 +1238,8 @@ async function init() {
   const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
   const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
   // Prefer the newer anchored tree model if present, but keep backwards-compatible fallbacks.
-  const treeUrlCandidates = ['/models/tree2.glb', '/models/tree2.gml', '/models/tree.glb']
+  // Prefer the latest export first (tree3.glb), then fall back.
+  const treeUrlCandidates = ['/models/tree3.glb', '/models/tree2.glb', '/models/tree.glb']
 
   // Default: L’Écusson, 34000 Montpellier
   let treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136111111111 // 43°36'40.9"N
@@ -1381,50 +1429,52 @@ async function init() {
     new Matrix4(),
   )
 
-  let treeModel: Model | null = null
   let loadedTreeUrl: string | null = null
-  try {
-    treeModel = await Model.fromGltfAsync({
-      url: hasIonTree ? await IonResource.fromAssetId(env.ionTreeAssetId) : treeUrlCandidates[0],
-      modelMatrix: treeModelMatrix,
-      scale: 1.0,
-    })
-    viewer.scene.primitives.add(treeModel)
-    if (!hasIonTree) loadedTreeUrl = treeUrlCandidates[0]
-  } catch (e) {
-    if (!hasIonTree) {
-      // Try fallbacks (tree2.gml, then tree.glb)
-      for (let i = 1; i < treeUrlCandidates.length; i++) {
-        try {
-          treeModel = await Model.fromGltfAsync({
-            url: treeUrlCandidates[i],
-            modelMatrix: treeModelMatrix,
-            scale: 1.0,
-          })
-          viewer.scene.primitives.add(treeModel)
-          setStatus(`Loaded tree model: ${treeUrlCandidates[i]}`)
-          loadedTreeUrl = treeUrlCandidates[i]
-          break
-        } catch {
-          // try next
-        }
+  const prefer = new URLSearchParams(window.location.search).get('tree') // 'ion' | 'local'
+  const useIon = prefer === 'local' ? false : hasIonTree
+  const tryLoadLocal = async () => {
+    for (const candidate of treeUrlCandidates) {
+      try {
+        treeModel = await Model.fromGltfAsync({ url: candidate, modelMatrix: treeModelMatrix, scale: 1.0 })
+        viewer.scene.primitives.add(treeModel)
+        loadedTreeUrl = candidate
+        setStatus(`Tree source: local (${candidate})`)
+        return true
+      } catch {
+        // try next
       }
     }
-    if (!treeModel) {
-      setStatus(
-        `Failed to load tree model. ${
-          hasIonTree
-            ? `Check VITE_ION_TREE_ASSET_ID (${env.ionTreeAssetId}).`
-            : `Tried ${treeUrlCandidates.join(', ')}. Ensure the file exists in frontend/public/models/ and is a valid GLB.`
-        } Details: ${e instanceof Error ? e.message : String(e)}`,
-      )
-    }
+    return false
   }
 
-  // Load Orn.* anchors from the tree model (if available). This makes ornaments land exactly where you placed them in Blender.
-  let ornAnchors: Array<{ name: string; matrix: Matrix4 }> = []
-  // Debug-only: load Light.* anchors so we can preview ornaments attached to light anchors.
-  let lightAnchors: Array<{ name: string; matrix: Matrix4 }> = []
+  if (useIon) {
+    try {
+      treeModel = await Model.fromGltfAsync({
+        url: await IonResource.fromAssetId(env.ionTreeAssetId),
+        modelMatrix: treeModelMatrix,
+        scale: 1.0,
+      })
+      viewer.scene.primitives.add(treeModel)
+      setStatus(`Tree source: ion (asset ${env.ionTreeAssetId})${prefer === 'ion' ? ' (forced)' : ''}`)
+    } catch (e) {
+      setStatus(
+        `Ion tree load failed (asset ${env.ionTreeAssetId}). Falling back to local… Details: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      )
+      const ok = await tryLoadLocal()
+      if (!ok) setStatus('Tree load failed (ion + local fallbacks).')
+    }
+  } else {
+    const ok = await tryLoadLocal()
+    if (!ok) setStatus('Tree load failed (local fallbacks).')
+  }
+
+  // Anchors:
+  // We only store the node NAMES from the GLB, and compute their actual transforms from Cesium runtime nodes.
+  // This avoids all axis/root/sceneGraph transform mismatches between Blender/glTF and Cesium.
+  let ornAnchorNames: string[] = []
+  let lightAnchorNames: string[] = []
   const anchorSourceUrl =
     loadedTreeUrl && loadedTreeUrl.endsWith('.glb')
       ? loadedTreeUrl
@@ -1432,16 +1482,18 @@ async function init() {
 
   if (treeModel && anchorSourceUrl) {
     try {
-      ornAnchors = await loadAnchorMatrices(anchorSourceUrl, 'Orn.')
-      if (ornAnchors.length) setStatus(`Loaded ${ornAnchors.length} ornament anchors from ${anchorSourceUrl}.`)
+      const names = await loadAnchorNames(anchorSourceUrl, 'Orn.')
+      ornAnchorNames = names
+      if (ornAnchorNames.length) setStatus(`Loaded ${ornAnchorNames.length} ornament anchor names from ${anchorSourceUrl}.`)
       else setStatus(`No Orn.* anchors found in ${anchorSourceUrl}.`)
     } catch (e) {
       setStatus(`Failed to read anchors from ${anchorSourceUrl}: ${e instanceof Error ? e.message : String(e)}`)
     }
     if (DEBUG_MODE) {
       try {
-        lightAnchors = await loadAnchorMatrices(anchorSourceUrl, 'Light.')
-        if (lightAnchors.length) setStatus(`Loaded ${lightAnchors.length} light anchors from ${anchorSourceUrl}.`)
+        const names = await loadAnchorNames(anchorSourceUrl, 'Light.')
+        lightAnchorNames = names
+        if (lightAnchorNames.length) setStatus(`Loaded ${lightAnchorNames.length} light anchor names from ${anchorSourceUrl}.`)
       } catch {
         // ignore
       }
@@ -1456,6 +1508,34 @@ async function init() {
     for (const o of localOrnaments) {
       o.model.modelMatrix = Matrix4.multiply(treeModel.modelMatrix, o.anchorMatrix, new Matrix4())
     }
+  }
+
+  // Compute a node's WORLD matrix using Cesium runtime nodes, so it matches the rendered mesh exactly.
+  const scratchNodeWorld = new Matrix4()
+  const scratchInvModel = new Matrix4()
+  const getNodeWorldMatrix = (nodeName: string): Matrix4 | null => {
+    if (!treeModel) return null
+    try {
+      if (!(treeModel as any)._ready) return null
+      const node = treeModel.getNode(nodeName)
+      const runtimeNode = (node as any)?._runtimeNode
+      const computedTransform = runtimeNode?.computedTransform ?? runtimeNode?._computedTransform
+      const sceneGraph = (treeModel as any)?._sceneGraph
+      const computedModelMatrix = sceneGraph?._computedModelMatrix
+      if (!computedTransform || !computedModelMatrix) return null
+      // This matches how Cesium builds drawCommand.modelMatrix = computedModelMatrix * transformToRoot
+      return Matrix4.multiplyTransformation(computedModelMatrix as Matrix4, computedTransform as Matrix4, scratchNodeWorld)
+    } catch {
+      return null
+    }
+  }
+  // Anchor matrix stored relative to treeModel.modelMatrix (so it stays attached when we update modelMatrix).
+  const getNodeAnchorRelativeToModelMatrix = (nodeName: string): Matrix4 | null => {
+    if (!treeModel) return null
+    const world = getNodeWorldMatrix(nodeName)
+    if (!world) return null
+    Matrix4.inverse(treeModel.modelMatrix, scratchInvModel)
+    return Matrix4.multiplyTransformation(scratchInvModel, world, new Matrix4())
   }
 
   // Debug-only: preview ornaments at Light.* anchors (answers: “is it on the tree or floating outside?”)
@@ -1482,17 +1562,22 @@ async function init() {
       setStatus('Preview: treeModel not ready yet.')
       return
     }
-    if (!lightAnchors.length) {
-      setStatus('Preview: no Light.* anchors found in tree2.glb.')
+    if (!lightAnchorNames.length) {
+      setStatus('Preview: no Light.* anchors found in the current tree GLB.')
       return
     }
-    const idx = lightPreviewIdx++ % lightAnchors.length
-    const a = lightAnchors[idx]
+    const idx = lightPreviewIdx++ % lightAnchorNames.length
+    const name = lightAnchorNames[idx]
     const orn = ORNAMENTS.find((o) => o.id === selectedOrnament)
     const file = orn?.file ?? selectedOrnament
     const url = `/models/ornaments/${file}.glb`
     try {
-      const worldMatrix = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
+      const rel = getNodeAnchorRelativeToModelMatrix(name)
+      if (!rel) {
+        setStatus(`Preview: node not ready/unavailable: ${name}`)
+        return
+      }
+      const worldMatrix = Matrix4.multiply(treeModel.modelMatrix, rel, new Matrix4())
       const model = await Model.fromGltfAsync({
         url,
         modelMatrix: worldMatrix,
@@ -1501,10 +1586,10 @@ async function init() {
         maximumScale: 10,
       })
       viewer.scene.primitives.add(model)
-      const inst = { model, anchorMatrix: a.matrix }
+      const inst = { model, anchorMatrix: rel }
       localOrnaments.push(inst)
       lightPreview.push(inst)
-      setStatus(`Preview: placed ${file} on ${a.name} (#${idx}).`)
+      setStatus(`Preview: placed ${file} on ${name} (#${idx}).`)
     } catch (e) {
       setStatus(`Preview failed: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -1527,16 +1612,15 @@ async function init() {
       setStatus('Anchor balls: treeModel not ready yet.')
       return
     }
-    if (!ornAnchors.length && !lightAnchors.length) {
+    if (!ornAnchorNames.length && !lightAnchorNames.length) {
       setStatus('Anchor balls: no anchors loaded.')
       return
     }
     clearAnchorBalls()
-    const scratchLocal = new Cartesian3()
-    const scratchWorld = new Cartesian3()
-    const addBall = (id: string, anchorMatrix: Matrix4, color: Color) => {
-      const local = Matrix4.getTranslation(anchorMatrix, scratchLocal)
-      const world = Matrix4.multiplyByPoint(treeModel!.modelMatrix, local, scratchWorld)
+    const addBall = (id: string, nodeName: string, color: Color) => {
+      const worldM = getNodeWorldMatrix(nodeName)
+      if (!worldM) return
+      const world = Matrix4.getTranslation(worldM, new Cartesian3())
       viewer.entities.add({
         id,
         position: world,
@@ -1553,10 +1637,10 @@ async function init() {
 
     const blue = new Color(0.3, 0.7, 1.0, 0.9)
     const red = new Color(1.0, 0.35, 0.35, 0.9)
-    for (let i = 0; i < ornAnchors.length; i++) addBall(`dbg:ornBall:${i}`, ornAnchors[i].matrix, blue)
-    for (let i = 0; i < lightAnchors.length; i++) addBall(`dbg:lightBall:${i}`, lightAnchors[i].matrix, red)
+    for (let i = 0; i < ornAnchorNames.length; i++) addBall(`dbg:ornBall:${i}`, ornAnchorNames[i], blue)
+    for (let i = 0; i < lightAnchorNames.length; i++) addBall(`dbg:lightBall:${i}`, lightAnchorNames[i], red)
     setStatus(
-      `Anchor balls attached: Orn.*=${ornAnchors.length} (blue), Light.*=${lightAnchors.length} (red).`,
+      `Anchor balls attached: Orn.*=${ornAnchorNames.length} (blue), Light.*=${lightAnchorNames.length} (red).`,
     )
   }
 
@@ -2169,10 +2253,15 @@ async function init() {
     // Otherwise, fall back to the previous procedural placement.
     let worldMatrix: Matrix4 | null = null
     let anchorMatrix: Matrix4 | null = null
-    if (treeModel && ornAnchors.length) {
-      const a = ornAnchors[anchorIndex % ornAnchors.length]
-      anchorMatrix = a.matrix
-      worldMatrix = Matrix4.multiply(treeModel.modelMatrix, a.matrix, new Matrix4())
+    if (treeModel && ornAnchorNames.length) {
+      const name = ornAnchorNames[anchorIndex % ornAnchorNames.length]
+      const rel = getNodeAnchorRelativeToModelMatrix(name)
+      if (!rel) {
+        setStatus(`Ornament: node not ready/unavailable: ${name}`)
+        return
+      }
+      anchorMatrix = rel
+      worldMatrix = Matrix4.multiply(treeModel.modelMatrix, anchorMatrix, new Matrix4())
     } else if (treeModel) {
       // Fallback: drop near tree (kept as backup)
       const origin = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
