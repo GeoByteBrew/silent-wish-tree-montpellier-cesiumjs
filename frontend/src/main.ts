@@ -4,12 +4,15 @@ import {
   Cartographic,
   Cesium3DTileset,
   Color,
+  ConstantProperty,
+  ConstantPositionProperty,
   HeadingPitchRoll,
   Ion,
   IonImageryProvider,
   IonResource,
   Math as CesiumMath,
   Matrix4,
+  NearFarScalar,
   BillboardCollection,
   Model,
   Quaternion,
@@ -117,6 +120,10 @@ const ORNAMENTS = [
 ] as const
 
 type OrnamentId = (typeof ORNAMENTS)[number]['id']
+const ORNAMENT_ID_SET = new Set<string>(ORNAMENTS.map((o) => o.id))
+function isOrnamentId(v: string): v is OrnamentId {
+  return ORNAMENT_ID_SET.has(v)
+}
 
 function $(sel: string) {
   const el = document.querySelector(sel)
@@ -413,6 +420,13 @@ function getNumberParam(name: string): number | null {
   if (v == null || v.trim() === '') return null
   const n = Number(v)
   return Number.isFinite(n) ? n : null
+}
+
+function getStringParam(name: string): string | null {
+  const v = new URLSearchParams(window.location.search).get(name)
+  if (v == null) return null
+  const s = v.trim()
+  return s ? s : null
 }
 
 function getStoredNumber(key: string): number | null {
@@ -1234,12 +1248,11 @@ async function init() {
     return { lon: CesiumMath.toDegrees(carto.longitude), lat: CesiumMath.toDegrees(carto.latitude) }
   }
 
-  // Tree (placeholder: you will drop models into /public/models/)
+  // Tree model (served by Vercel from /public/models, with ion fallback)
   const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
   const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
-  // Prefer the newer anchored tree model if present, but keep backwards-compatible fallbacks.
-  // Prefer the latest export first (tree3.glb), then fall back.
-  const treeUrlCandidates = ['/models/tree3.glb', '/models/tree2.glb', '/models/tree.glb']
+  // Single source of truth (avoid tree/tree2/tree3 confusion): always use tree3.glb.
+  const treeUrlCandidates = ['/models/tree4.glb']
 
   // Default: L’Écusson, 34000 Montpellier
   let treeLatDeg = Number.isFinite(env.treeLat) ? env.treeLat : 43.61136111111111 // 43°36'40.9"N
@@ -1430,15 +1443,14 @@ async function init() {
   )
 
   let loadedTreeUrl: string | null = null
-  const prefer = new URLSearchParams(window.location.search).get('tree') // 'ion' | 'local'
-  const useIon = prefer === 'local' ? false : hasIonTree
+  const prefer = new URLSearchParams(window.location.search).get('tree') // 'local' | 'ion' | null
   const tryLoadLocal = async () => {
     for (const candidate of treeUrlCandidates) {
       try {
         treeModel = await Model.fromGltfAsync({ url: candidate, modelMatrix: treeModelMatrix, scale: 1.0 })
         viewer.scene.primitives.add(treeModel)
         loadedTreeUrl = candidate
-        setStatus(`Tree source: local (${candidate})`)
+        setStatus(`Tree source: local (${candidate})${prefer === 'local' ? ' (forced)' : ''}`)
         return true
       } catch {
         // try next
@@ -1446,8 +1458,8 @@ async function init() {
     }
     return false
   }
-
-  if (useIon) {
+  const tryLoadIon = async () => {
+    if (!hasIonTree) return false
     try {
       treeModel = await Model.fromGltfAsync({
         url: await IonResource.fromAssetId(env.ionTreeAssetId),
@@ -1455,44 +1467,95 @@ async function init() {
         scale: 1.0,
       })
       viewer.scene.primitives.add(treeModel)
+      loadedTreeUrl = null
       setStatus(`Tree source: ion (asset ${env.ionTreeAssetId})${prefer === 'ion' ? ' (forced)' : ''}`)
+      return true
     } catch (e) {
-      setStatus(
-        `Ion tree load failed (asset ${env.ionTreeAssetId}). Falling back to local… Details: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      )
-      const ok = await tryLoadLocal()
-      if (!ok) setStatus('Tree load failed (ion + local fallbacks).')
+      setStatus(`Ion tree load failed (asset ${env.ionTreeAssetId}): ${e instanceof Error ? e.message : String(e)}`)
+      return false
+    }
+  }
+
+  // Desired behavior:
+  // - Default: local first (fast + predictable) → if it fails, fallback to ion.
+  // - Debug override: ?tree=ion forces ion; ?tree=local forces local.
+  if (prefer === 'ion') {
+    const ok = await tryLoadIon()
+    if (!ok) {
+      setStatus(`Ion forced but failed. Trying local…`)
+      const okLocal = await tryLoadLocal()
+      if (!okLocal) setStatus('Tree load failed (ion forced + local fallback).')
+    }
+  } else if (prefer === 'local') {
+    const ok = await tryLoadLocal()
+    if (!ok) {
+      setStatus(`Local forced but failed. Trying ion…`)
+      const okIon = await tryLoadIon()
+      if (!okIon) setStatus('Tree load failed (local forced + ion fallback).')
     }
   } else {
-    const ok = await tryLoadLocal()
-    if (!ok) setStatus('Tree load failed (local fallbacks).')
+    const okLocal = await tryLoadLocal()
+    if (!okLocal) {
+      setStatus('Local tree load failed. Falling back to ion…')
+      const okIon = await tryLoadIon()
+      if (!okIon) setStatus('Tree load failed (local + ion fallback).')
+    }
   }
 
   // Anchors:
   // We only store the node NAMES from the GLB, and compute their actual transforms from Cesium runtime nodes.
   // This avoids all axis/root/sceneGraph transform mismatches between Blender/glTF and Cesium.
+  const lightsEnabled = (getStringParam('lights') ?? '1') !== '0'
   let ornAnchorNames: string[] = []
   let lightAnchorNames: string[] = []
+  const waitModelReady = async (m: Model) => {
+    if (m.ready) return
+    await new Promise<void>((resolve) => {
+      // readyEvent listeners are passed the model instance, but we don't need it here.
+      const remove = (m.readyEvent as any).addEventListener(() => {
+        try {
+          remove?.()
+        } catch {
+          // ignore
+        }
+        resolve()
+      })
+    })
+  }
+  const deriveAnchorNamesFromLoadedModel = (prefix: string): string[] => {
+    // Cesium builds an internal node name map once the model is ready.
+    const map = (treeModel as any)?._nodesByName as Record<string, unknown> | undefined
+    if (!map) return []
+    return Object.keys(map)
+      .filter((n) => n.startsWith(prefix))
+      .sort((a, b) => a.localeCompare(b, 'en'))
+  }
   const anchorSourceUrl = loadedTreeUrl ?? treeUrlCandidates[0] ?? null
 
-  if (treeModel && anchorSourceUrl) {
-    try {
-      const names = await loadAnchorNames(anchorSourceUrl, 'Orn.')
-      ornAnchorNames = names
-      if (ornAnchorNames.length) setStatus(`Loaded ${ornAnchorNames.length} ornament anchor names from ${anchorSourceUrl}.`)
-      else setStatus(`No Orn.* anchors found in ${anchorSourceUrl}.`)
-    } catch (e) {
-      setStatus(`Failed to read anchors from ${anchorSourceUrl}: ${e instanceof Error ? e.message : String(e)}`)
-    }
-    if (DEBUG_MODE) {
+  if (treeModel) {
+    await waitModelReady(treeModel)
+
+    // IMPORTANT: Use the LOADED model (ion or local) as the source of truth.
+    // If we read names from a different GLB, getNode(name) will fail and debug balls will be invisible.
+    ornAnchorNames = deriveAnchorNamesFromLoadedModel('Orn.')
+    if (DEBUG_MODE || lightsEnabled) lightAnchorNames = deriveAnchorNamesFromLoadedModel('Light.')
+
+    if (ornAnchorNames.length || lightAnchorNames.length) {
+      setStatus(
+        `Anchors from loaded model: Orn.*=${ornAnchorNames.length}` +
+          (DEBUG_MODE ? `, Light.*=${lightAnchorNames.length}` : ''),
+      )
+    } else if (anchorSourceUrl) {
+      // Fallback (legacy): read anchor names from a GLB URL if Cesium internals are unavailable.
       try {
-        const names = await loadAnchorNames(anchorSourceUrl, 'Light.')
-        lightAnchorNames = names
-        if (lightAnchorNames.length) setStatus(`Loaded ${lightAnchorNames.length} light anchor names from ${anchorSourceUrl}.`)
-      } catch {
-        // ignore
+        ornAnchorNames = await loadAnchorNames(anchorSourceUrl, 'Orn.')
+        if (DEBUG_MODE || lightsEnabled) lightAnchorNames = await loadAnchorNames(anchorSourceUrl, 'Light.')
+        setStatus(
+          `Anchors from ${anchorSourceUrl}: Orn.*=${ornAnchorNames.length}` +
+            (DEBUG_MODE ? `, Light.*=${lightAnchorNames.length}` : ''),
+        )
+      } catch (e) {
+        setStatus(`Failed to read anchors: ${e instanceof Error ? e.message : String(e)}`)
       }
     }
   }
@@ -1500,11 +1563,110 @@ async function init() {
   // Keep ornaments attached to the main tree, even if the tree modelMatrix gets updated after placement.
   type LocalOrnInstance = { model: Model; anchorMatrix: Matrix4 }
   const localOrnaments: LocalOrnInstance[] = []
+  const placedWishIds = new Set<string>()
   const recomputeLocalOrnaments = () => {
     if (!treeModel) return
     for (const o of localOrnaments) {
       o.model.modelMatrix = Matrix4.multiply(treeModel.modelMatrix, o.anchorMatrix, new Matrix4())
     }
+  }
+
+  // “Light.*” anchors: render as glowing bulbs (points) attached to the tree.
+  type LocalLightInstance = { id: string; anchorMatrix: Matrix4 }
+  const localLights: LocalLightInstance[] = []
+  const recomputeLocalLights = () => {
+    if (!treeModel) return
+    for (const l of localLights) {
+      const world = Matrix4.multiply(treeModel.modelMatrix, l.anchorMatrix, new Matrix4())
+      const pos = Matrix4.getTranslation(world, new Cartesian3())
+      const ent = viewer.entities.getById(l.id)
+      if (ent) {
+        const p = ent.position as any
+        if (p && typeof p.setValue === 'function') p.setValue(pos)
+        else ent.position = new ConstantPositionProperty(pos)
+      }
+    }
+  }
+  const clearTreeLights = () => {
+    for (const l of localLights) {
+      const ent = viewer.entities.getById(l.id)
+      if (ent) viewer.entities.remove(ent)
+    }
+    localLights.length = 0
+  }
+  const attachTreeLights = () => {
+    if (!lightsEnabled) return
+    if (!treeModel) return
+    if (!lightAnchorNames.length) return
+    clearTreeLights()
+
+    const scaleByDistance = new NearFarScalar(80, 1.0, 900, 0.35)
+    const haloScaleByDistance = new NearFarScalar(80, 1.2, 900, 0.4)
+
+    const warmCore = new Color(1.0, 0.9, 0.65, 0.95)
+    const warmHalo = new Color(1.0, 0.9, 0.65, 0.22)
+    for (let i = 0; i < lightAnchorNames.length; i++) {
+      const name = lightAnchorNames[i]
+      const rel = getNodeAnchorRelativeToModelMatrix(name)
+      if (!rel) continue
+      const world = Matrix4.multiply(treeModel.modelMatrix, rel, new Matrix4())
+      const pos = Matrix4.getTranslation(world, new Cartesian3())
+
+      // Core (bright)
+      const coreId = `treeLight:core:${i}`
+      viewer.entities.add({
+        id: coreId,
+        position: pos,
+        point: {
+          pixelSize: 6,
+          color: new ConstantProperty(warmCore),
+          outlineColor: new ConstantProperty(Color.WHITE.withAlpha(0.18)),
+          outlineWidth: 1,
+          scaleByDistance: new ConstantProperty(scaleByDistance),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      })
+      localLights.push({ id: coreId, anchorMatrix: rel })
+
+      // Halo (soft glow)
+      const haloId = `treeLight:halo:${i}`
+      viewer.entities.add({
+        id: haloId,
+        position: pos,
+        point: {
+          pixelSize: 16,
+          color: new ConstantProperty(warmHalo),
+          outlineWidth: 0,
+          scaleByDistance: new ConstantProperty(haloScaleByDistance),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      })
+      localLights.push({ id: haloId, anchorMatrix: rel })
+    }
+
+    // Gentle twinkle (keeps it lively without “billboard lying down” issues).
+    const phases = new Map<string, { phase: number; speed: number }>()
+    for (let i = 0; i < lightAnchorNames.length; i++) {
+      phases.set(`treeLight:core:${i}`, { phase: i * 0.73, speed: 0.9 + (i % 7) * 0.05 })
+      phases.set(`treeLight:halo:${i}`, { phase: i * 0.73 + 1.2, speed: 0.85 + (i % 7) * 0.05 })
+    }
+    const t0 = performance.now()
+    const twinkleCb = () => {
+      const t = (performance.now() - t0) / 1000
+      for (const l of localLights) {
+        const ent = viewer.entities.getById(l.id)
+        const g = ent?.point as any
+        const c = g?.color
+        const meta = phases.get(l.id)
+        if (!c || !meta || typeof c.setValue !== 'function') continue
+        const s = 0.6 + 0.4 * Math.pow(0.5 + 0.5 * Math.sin(t * meta.speed + meta.phase), 2)
+        if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, 0.75 + 0.25 * s))
+        else c.setValue(new Color(1.0, 0.9, 0.65, 0.12 + 0.22 * s))
+      }
+    }
+    viewer.scene.preUpdate.addEventListener(twinkleCb)
+
+    setStatus(`Lights enabled: ${Math.floor(localLights.length / 2)} bulbs.`)
   }
 
   // Compute a node's WORLD matrix using Cesium runtime nodes, so it matches the rendered mesh exactly.
@@ -1535,6 +1697,9 @@ async function init() {
     return Matrix4.multiplyTransformation(scratchInvModel, world, new Matrix4())
   }
 
+  // Once we can compute node-relative anchors, attach bulbs to Light.* anchors (production default).
+  if (lightsEnabled) attachTreeLights()
+
   // Debug-only: preview ornaments at Light.* anchors (answers: “is it on the tree or floating outside?”)
   const lightPreview: LocalOrnInstance[] = []
   const clearLightPreview = () => {
@@ -1560,7 +1725,7 @@ async function init() {
       return
     }
     if (!lightAnchorNames.length) {
-      setStatus('Preview: no Light.* anchors found in the current tree GLB.')
+      setStatus('Preview: no Light.* anchors found in the loaded tree model.')
       return
     }
     const idx = lightPreviewIdx++ % lightAnchorNames.length
@@ -1699,7 +1864,7 @@ async function init() {
     treeModel.modelMatrix = m
     // Keep attached objects aligned with the tree after any modelMatrix update.
     recomputeLocalOrnaments()
-    // lights removed
+    recomputeLocalLights()
 
     if (DEBUG_MODE) {
       setStoredNumber(mainKey.e, mainEast)
@@ -2288,6 +2453,43 @@ async function init() {
     }
   }
 
+  // Load existing ornaments (global, for all users) from Supabase and render them.
+  const loadExistingOrnaments = async () => {
+    if (!env.supabaseUrl || !env.supabaseAnonKey) return
+    if (!treeModel) return
+    if (!ornAnchorNames.length) return
+    try {
+      const r = await fetch(`${env.supabaseUrl}/functions/v1/ornaments?limit=250`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+          apikey: env.supabaseAnonKey,
+        },
+      })
+      if (!r.ok) return
+      const j = (await r.json()) as {
+        ok: boolean
+        items: Array<{ id: string; anchor_index: number; ornament_type: string }>
+      }
+      const items = Array.isArray(j?.items) ? j.items : []
+      // Place oldest first so newer ornaments sit "on top" visually if there are collisions.
+      items.reverse()
+
+      let placed = 0
+      for (const it of items) {
+        if (!it?.id || typeof it.anchor_index !== 'number' || typeof it.ornament_type !== 'string') continue
+        if (placedWishIds.has(it.id)) continue
+        if (!isOrnamentId(it.ornament_type)) continue
+        placedWishIds.add(it.id)
+        placed++
+        // Fire-and-forget-ish, but await to avoid spawning hundreds at once.
+        await placeLocalOrnament(it.anchor_index, it.ornament_type)
+      }
+      if (placed) setStatus(`Loaded ${placed} ornaments from Supabase.`)
+    } catch {
+      // ignore
+    }
+  }
+
   // Stats + Reveal
   async function fetchStats() {
     if (!env.supabaseUrl || !env.supabaseAnonKey) return
@@ -2307,6 +2509,10 @@ async function init() {
   }
   void fetchStats()
   setInterval(fetchStats, 20_000)
+
+  // After initial tree + anchors are ready, load globally persisted ornaments for everyone.
+  // (Safe to call multiple times; we dedupe by wish id.)
+  void loadExistingOrnaments()
 
   ;($('#revealBtn') as HTMLButtonElement).onclick = async () => {
     // Open the reveal page (it will handle "not yet" gating via the backend).
@@ -2398,7 +2604,8 @@ async function init() {
         }
         throw new Error(`HTTP ${r.status}${detail ? ` — ${detail}` : ''}`)
       }
-      const j = (await r.json()) as { ok: boolean; anchor_index: number }
+      const j = (await r.json()) as { ok: boolean; id: string; anchor_index: number }
+      if (j?.id) placedWishIds.add(j.id)
       await placeLocalOrnament(j.anchor_index, selectedOrnament)
       void fetchStats()
 
