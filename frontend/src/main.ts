@@ -1006,7 +1006,7 @@ async function init() {
       // Dynamic center: actual tree model position if available, else camera focus point.
       const center = treeModel
         ? Matrix4.getTranslation(treeModel.modelMatrix, scratchCenter)
-        : Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0, scratchCenter)
+        : Cartesian3.fromDegrees(camLonDeg, camLatDeg, 0, viewer.scene.globe.ellipsoid, scratchCenter)
 
       Matrix4.clone(Transforms.eastNorthUpToFixedFrame(center), scratchEnu)
       Matrix4.inverse(scratchEnu, scratchInvEnu)
@@ -1475,10 +1475,7 @@ async function init() {
   // This avoids all axis/root/sceneGraph transform mismatches between Blender/glTF and Cesium.
   let ornAnchorNames: string[] = []
   let lightAnchorNames: string[] = []
-  const anchorSourceUrl =
-    loadedTreeUrl && loadedTreeUrl.endsWith('.glb')
-      ? loadedTreeUrl
-      : treeUrlCandidates.find((u) => u.endsWith('.glb')) ?? null
+  const anchorSourceUrl = loadedTreeUrl ?? treeUrlCandidates[0] ?? null
 
   if (treeModel && anchorSourceUrl) {
     try {
