@@ -105,6 +105,14 @@ const env = {
   cameraStartHeadingDeg: Number((import.meta.env.VITE_CAMERA_START_HEADING_DEG as string | undefined)?.trim() ?? ''),
   cameraStartPitchDeg: Number((import.meta.env.VITE_CAMERA_START_PITCH_DEG as string | undefined)?.trim() ?? ''),
   cameraStartRollDeg: Number((import.meta.env.VITE_CAMERA_START_ROLL_DEG as string | undefined)?.trim() ?? ''),
+
+  // Optional: City camera preset (for the "City" button)
+  cameraCityLon: Number((import.meta.env.VITE_CAMERA_CITY_LON as string | undefined)?.trim() ?? ''),
+  cameraCityLat: Number((import.meta.env.VITE_CAMERA_CITY_LAT as string | undefined)?.trim() ?? ''),
+  cameraCityHeight: Number((import.meta.env.VITE_CAMERA_CITY_HEIGHT as string | undefined)?.trim() ?? ''),
+  cameraCityHeadingDeg: Number((import.meta.env.VITE_CAMERA_CITY_HEADING_DEG as string | undefined)?.trim() ?? ''),
+  cameraCityPitchDeg: Number((import.meta.env.VITE_CAMERA_CITY_PITCH_DEG as string | undefined)?.trim() ?? ''),
+  cameraCityRollDeg: Number((import.meta.env.VITE_CAMERA_CITY_ROLL_DEG as string | undefined)?.trim() ?? ''),
 }
 
 const ORNAMENTS = [
@@ -2413,14 +2421,43 @@ async function init() {
   }
 
   // Camera presets
-  const flyToCity = async () => {
+  async function flyToStart() {
+    const sv = getLocalStartViewIfDebug()
+    const start: StartView = sv ?? {
+      lon: Number.isFinite(env.cameraStartLon) ? env.cameraStartLon : camLonDeg,
+      lat: Number.isFinite(env.cameraStartLat) ? env.cameraStartLat : camLatDeg,
+      height: Number.isFinite(env.cameraStartHeight) ? env.cameraStartHeight : 180,
+      heading: Number.isFinite(env.cameraStartHeadingDeg) ? env.cameraStartHeadingDeg : 25,
+      pitch: Number.isFinite(env.cameraStartPitchDeg) ? env.cameraStartPitchDeg : -25,
+      roll: Number.isFinite(env.cameraStartRollDeg) ? env.cameraStartRollDeg : 0,
+    }
     await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(camLonDeg, camLatDeg, 350),
-      orientation: { heading: 0, pitch: CesiumMath.toRadians(-35), roll: 0 },
+      destination: Cartesian3.fromDegrees(start.lon, start.lat, start.height),
+      orientation: {
+        heading: CesiumMath.toRadians(start.heading),
+        pitch: CesiumMath.toRadians(start.pitch),
+        roll: CesiumMath.toRadians(start.roll),
+      },
+      duration: 0.9,
+    })
+  }
+
+  const flyToCity = async () => {
+    const lon = Number.isFinite(env.cameraCityLon) ? env.cameraCityLon : camLonDeg
+    const lat = Number.isFinite(env.cameraCityLat) ? env.cameraCityLat : camLatDeg
+    const height = Number.isFinite(env.cameraCityHeight) ? env.cameraCityHeight : 350
+    const heading = Number.isFinite(env.cameraCityHeadingDeg) ? env.cameraCityHeadingDeg : 0
+    const pitch = Number.isFinite(env.cameraCityPitchDeg) ? env.cameraCityPitchDeg : -35
+    const roll = Number.isFinite(env.cameraCityRollDeg) ? env.cameraCityRollDeg : 0
+    await viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(lon, lat, height),
+      orientation: { heading: CesiumMath.toRadians(heading), pitch: CesiumMath.toRadians(pitch), roll: CesiumMath.toRadians(roll) },
       duration: 1.2,
     })
   }
-  const flyToTree = async () => {
+
+  // Keep the old behavior as a "refocus the camera on the tree model" helper.
+  const flyToTreeFocus = async () => {
     // Prefer flying to the actual main tree model position (after layout + live edits),
     // so camera always ends up near the tree even if env camera coords are wrong.
     try {
@@ -2448,27 +2485,8 @@ async function init() {
     })
   }
   ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
-  ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToTree()
-  const flyToStart = async () => {
-    const sv = getLocalStartViewIfDebug()
-    const start: StartView = sv ?? {
-      lon: Number.isFinite(env.cameraStartLon) ? env.cameraStartLon : camLonDeg,
-      lat: Number.isFinite(env.cameraStartLat) ? env.cameraStartLat : camLatDeg,
-      height: Number.isFinite(env.cameraStartHeight) ? env.cameraStartHeight : 180,
-      heading: Number.isFinite(env.cameraStartHeadingDeg) ? env.cameraStartHeadingDeg : 25,
-      pitch: Number.isFinite(env.cameraStartPitchDeg) ? env.cameraStartPitchDeg : -25,
-      roll: Number.isFinite(env.cameraStartRollDeg) ? env.cameraStartRollDeg : 0,
-    }
-    await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(start.lon, start.lat, start.height),
-      orientation: {
-        heading: CesiumMath.toRadians(start.heading),
-        pitch: CesiumMath.toRadians(start.pitch),
-        roll: CesiumMath.toRadians(start.roll),
-      },
-      duration: 0.9,
-    })
-  }
+  // Requested: Tree button should match the start camera view.
+  ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToStart()
   void flyToStart()
 
   // Local ornament placement
@@ -2635,7 +2653,7 @@ async function init() {
 
   // Optional: click tree to refocus
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
-  handler.setInputAction(() => void flyToTree(), ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
+  handler.setInputAction(() => void flyToTreeFocus(), ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
 
   hangBtn.onclick = async () => {
     const text = wishInput.value.trim()
