@@ -1057,12 +1057,8 @@ async function init() {
       // which can trap the camera “underground” inside tiles. Instead, clamp in the tree-local ENU frame:
       // - min: 1m above the ENU origin (tree center)
       // - max: 50m above the ENU origin
-      const MIN_Z = 1
       const MAX_Z = 50
-      if (scratchClampedEnu.z < MIN_Z) {
-        scratchClampedEnu.z = MIN_Z
-        changed = true
-      } else if (scratchClampedEnu.z > MAX_Z) {
+      if (scratchClampedEnu.z > MAX_Z) {
         scratchClampedEnu.z = MAX_Z
         changed = true
       }
