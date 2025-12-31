@@ -37,7 +37,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     done: 'C’est accroché. Télécharge ton souvenir.',
     download: 'Télécharger l’image',
     postcard: 'Carte postale',
-    postcardUsePeyrou: 'Vue Peyrou',
+    postcardUsePeyrou: 'Caméra libre',
     total: 'Vœux au total',
     camera: 'Caméra',
     camCity: 'Promenade du Peyrou',
@@ -59,7 +59,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     done: 'Hung. Download your memory.',
     download: 'Download image',
     postcard: 'Postcard',
-    postcardUsePeyrou: 'Peyrou view',
+    postcardUsePeyrou: 'Free camera',
     total: 'Total wishes',
     camera: 'Camera',
     camCity: 'Promenade du Peyrou',
@@ -720,7 +720,7 @@ async function init() {
           <div class="row">
             <button class="secondary" id="postcardBtn" type="button"></button>
             <label class="muted" style="display:flex;align-items:center;gap:8px;">
-              <input id="postcardPeyrouToggle" type="checkbox" checked />
+              <input id="postcardPeyrouToggle" type="checkbox" />
               <span id="postcardPeyrouLabel"></span>
             </label>
           </div>
@@ -2740,10 +2740,11 @@ async function init() {
   postcardBtn.onclick = async () => {
     try {
       postcardBtn.disabled = true
-      if (postcardPeyrouToggle.checked) {
-        // Ensure postcard is captured from Peyrou view by default.
+      // Toggle meaning:
+      // - checked  => "Free camera" (use current view)
+      // - unchecked => force Peyrou view before capturing
+      if (!postcardPeyrouToggle.checked) {
         await flyToCity()
-        // Let one frame render after the camera flight.
         await new Promise<void>((r) => requestAnimationFrame(() => r()))
       }
       const stamp = formatLocalTimestamp()
