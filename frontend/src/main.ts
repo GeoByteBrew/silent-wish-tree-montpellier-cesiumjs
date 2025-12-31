@@ -216,70 +216,78 @@ async function screenshotWithCaption(
     // ignore
   }
 
-  // Optional postcard frame overlay (transparent center)
-  const loadFrame = async (lang: 'fr' | 'en'): Promise<HTMLImageElement | null> => {
-    const src = lang === 'fr' ? '/frames/Frame_FR.png' : '/frames/Frame_EN.png'
-    try {
-      const img = new Image()
-      img.decoding = 'async'
-      img.src = src
-      // decode() is supported in modern browsers; fall back to onload
-      if ('decode' in img) await (img as any).decode()
-      else {
-        await new Promise<void>((resolve, reject) => {
-          ;(img as HTMLImageElement).onload = () => resolve()
-          ;(img as HTMLImageElement).onerror = () => reject(new Error(`Failed to load frame: ${src}`))
-        })
-      }
-      return img
-    } catch {
-      return null
-    }
-  }
+  // Postcard-style (text overlay). We intentionally do NOT use PNG frames for now.
+  // (Frames are temporarily disabled to avoid black-capture issues and sizing mismatches.)
 
   // ensure a frame is rendered
   viewer.render()
   const srcCanvas = viewer.scene.canvas
+  // Wait a couple frames to avoid intermittent black captures (WebGL buffer timing)
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
   const w = srcCanvas.width
   const h = srcCanvas.height
   const pad = Math.max(16, Math.floor(Math.min(w, h) * 0.02))
   const footerH = Math.max(90, Math.floor(h * 0.14))
 
-  // If a postcard frame is requested, render the Cesium view INTO the frame's inner rectangle,
-  // then draw the frame PNG over it (the inner area is mostly opaque in the provided frames).
   if (opts?.frameLang) {
-    const frame = await loadFrame(opts.frameLang)
-    const fw = frame?.naturalWidth ?? w
-    const fh = frame?.naturalHeight ?? h
-
+    const lang = opts.frameLang
     const out = document.createElement('canvas')
-    out.width = fw
-    out.height = fh
+    out.width = w
+    out.height = h
     const ctx = out.getContext('2d')
     if (!ctx) throw new Error('No 2D context')
 
-    // Target "photo" area inside the frame (tuned for Frame_FR/EN 1024x1024).
-    // This doesn't need to be perfect perspective — a slight rotation sells the postcard look.
-    const x = fw * 0.13
-    const y = fh * 0.285
-    const tw = fw * 0.76
-    const th = fh * 0.44
-    const rot = CesiumMath.toRadians(-2.6)
+    // White postcard background
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, w, h)
 
-    // Draw the 3D view into the target area (fit while preserving aspect ratio)
-    const scale = Math.max(tw / w, th / h)
-    const dw = w * scale
-    const dh = h * scale
-    const cx = x + tw * 0.5
-    const cy = y + th * 0.5
+    // 5px border + image inset
+    const border = 5
+    ctx.fillStyle = '#0b0f14'
+    ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(border, border, w - border * 2, h - border * 2)
+    ctx.drawImage(srcCanvas, border, border, w - border * 2, h - border * 2)
+
+    // Headline (two lines, 50% opacity)
+    const l1 = lang === 'fr' ? 'Joyeux Noël' : 'Merry Christmas'
+    const l2 = lang === 'fr' ? 'Bonne année' : 'Happy New Year'
+    const titleSize = Math.max(44, Math.floor(h * 0.085))
+    const lineH = Math.floor(titleSize * 0.85)
     ctx.save()
-    ctx.translate(cx, cy)
-    ctx.rotate(rot)
-    ctx.drawImage(srcCanvas, -dw * 0.5, -dh * 0.5, dw, dh)
+    ctx.globalAlpha = 0.5
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.font = `700 ${titleSize}px Tangerine, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+    ctx.fillStyle = '#ffffff'
+    ctx.shadowColor = 'rgba(0,0,0,0.35)'
+    ctx.shadowBlur = 10
+    ctx.shadowOffsetY = 2
+    const topPad = Math.max(10, Math.floor(h * 0.03))
+    ctx.fillText(l1, w * 0.5, topPad)
+    ctx.fillText(l2, w * 0.5, topPad + lineH)
     ctx.restore()
 
-    // Overlay the frame image
-    if (frame) ctx.drawImage(frame, 0, 0, fw, fh)
+    // Footer (small)
+    const stamp = formatLocalTimestamp()
+    const footer =
+      lang === 'fr'
+        ? `Montpellier – Arbre à vœux silencieux – 2026 · ${stamp}`
+        : `Montpellier – Silent Wish Tree – 2026 · ${stamp}`
+    const footerSize = Math.max(12, Math.floor(h * 0.022))
+    ctx.save()
+    ctx.globalAlpha = 0.85
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'bottom'
+    ctx.font = `400 ${footerSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+    ctx.fillStyle = '#ffffff'
+    ctx.shadowColor = 'rgba(0,0,0,0.35)'
+    ctx.shadowBlur = 8
+    ctx.shadowOffsetY = 2
+    ctx.fillText(footer, w * 0.5, h - Math.max(10, Math.floor(h * 0.02)))
+    ctx.restore()
+
     return out.toDataURL('image/png')
   }
 
@@ -1109,6 +1117,9 @@ async function init() {
     navigationHelpButton: false,
     fullscreenButton: false,
     shouldAnimate: true,
+    // Needed for reliable canvas screenshots from WebGL (postcard captures were coming out black).
+    // Cesium's TS types sometimes lag behind runtime options; cast to any.
+    contextOptions: { preserveDrawingBuffer: true } as any,
   })
 
   // Camera roam limit: keep the camera within a horizontal radius around the main tree.
@@ -2879,7 +2890,6 @@ async function init() {
 
       const dataUrl = await screenshotWithCaption(viewer, caption, {
         watermark: lang === 'fr' ? 'Souvenir de Montpellier' : 'Montpellier memory',
-        frameLang: lang,
       })
       downloadBtn.disabled = false
       downloadBtn.onclick = () => downloadDataUrl('silent-wish-montpellier.png', dataUrl)
