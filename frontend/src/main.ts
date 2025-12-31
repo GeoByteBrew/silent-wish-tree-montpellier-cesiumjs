@@ -245,17 +245,41 @@ async function screenshotWithCaption(
   const pad = Math.max(16, Math.floor(Math.min(w, h) * 0.02))
   const footerH = Math.max(90, Math.floor(h * 0.14))
 
-  // If a postcard frame is requested, output a single image sized like the Cesium canvas
-  // and overlay the frame PNG (with transparent center) on top of the render.
+  // If a postcard frame is requested, render the Cesium view INTO the frame's inner rectangle,
+  // then draw the frame PNG over it (the inner area is mostly opaque in the provided frames).
   if (opts?.frameLang) {
+    const frame = await loadFrame(opts.frameLang)
+    const fw = frame?.naturalWidth ?? w
+    const fh = frame?.naturalHeight ?? h
+
     const out = document.createElement('canvas')
-    out.width = w
-    out.height = h
+    out.width = fw
+    out.height = fh
     const ctx = out.getContext('2d')
     if (!ctx) throw new Error('No 2D context')
-    ctx.drawImage(srcCanvas, 0, 0, w, h)
-    const frame = await loadFrame(opts.frameLang)
-    if (frame) ctx.drawImage(frame, 0, 0, w, h)
+
+    // Target "photo" area inside the frame (tuned for Frame_FR/EN 1024x1024).
+    // This doesn't need to be perfect perspective — a slight rotation sells the postcard look.
+    const x = fw * 0.13
+    const y = fh * 0.285
+    const tw = fw * 0.76
+    const th = fh * 0.44
+    const rot = CesiumMath.toRadians(-2.6)
+
+    // Draw the 3D view into the target area (fit while preserving aspect ratio)
+    const scale = Math.max(tw / w, th / h)
+    const dw = w * scale
+    const dh = h * scale
+    const cx = x + tw * 0.5
+    const cy = y + th * 0.5
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(rot)
+    ctx.drawImage(srcCanvas, -dw * 0.5, -dh * 0.5, dw, dh)
+    ctx.restore()
+
+    // Overlay the frame image
+    if (frame) ctx.drawImage(frame, 0, 0, fw, fh)
     return out.toDataURL('image/png')
   }
 
@@ -776,6 +800,19 @@ async function init() {
   const statusLines: string[] = []
   // Keyboard focus: ensure only one editing mode reacts to shared keys.
   let mainTreeSelected = false
+  const isUserFacingStatus = (m: string) => {
+    const s = m.toLowerCase()
+    return (
+      s.includes('error') ||
+      s.includes('erreur') ||
+      s.includes('failed') ||
+      s.includes('missing') ||
+      s.includes('captcha') ||
+      s.includes('rate') ||
+      s.includes('http') ||
+      s.includes('postcard failed')
+    )
+  }
   const setStatus = (msg: string) => {
     const m = msg.trim()
     if (!m) {
@@ -783,7 +820,13 @@ async function init() {
       status.textContent = ''
       return
     }
-    // Keep last ~6 lines so debug messages don't get overwritten by later status updates.
+    if (!DEBUG_MODE) {
+      // Hide technical logs from normal users; only show actionable errors.
+      if (!isUserFacingStatus(m)) return
+      status.textContent = m
+      return
+    }
+    // Debug mode: keep last ~6 lines so debug messages don't get overwritten by later status updates.
     statusLines.push(m)
     while (statusLines.length > 6) statusLines.shift()
     status.textContent = statusLines.join('\n')
@@ -1691,6 +1734,18 @@ async function init() {
   const localLights: LocalLightInstance[] = []
   let lightsPhases = new Map<string, { phase: number; speed: number }>()
   let lightsTwinkleHooked = false
+  const parisTimeFmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Paris',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const parisMinutesNow = () => {
+    const parts = parisTimeFmt.formatToParts(new Date())
+    const hh = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
+    const mm = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
+    return hh * 60 + mm
+  }
   const recomputeLocalLights = () => {
     if (!treeModel) return
     for (const l of localLights) {
@@ -1783,6 +1838,9 @@ async function init() {
       const t0 = performance.now()
       viewer.scene.preUpdate.addEventListener(() => {
         const t = (performance.now() - t0) / 1000
+        // Between 08:30 and 17:00 (Europe/Paris), dim lights by 50%.
+        const mins = parisMinutesNow()
+        const dim = mins >= 8 * 60 + 30 && mins < 17 * 60 ? 0.5 : 1.0
         for (const l of localLights) {
           const ent = viewer.entities.getById(l.id)
           const g = ent?.point as any
@@ -1790,9 +1848,9 @@ async function init() {
           const meta = lightsPhases.get(l.id)
           if (!c || !meta || typeof c.setValue !== 'function') continue
           const s = 0.6 + 0.4 * Math.pow(0.5 + 0.5 * Math.sin(t * meta.speed + meta.phase), 2)
-          if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, 0.75 + 0.25 * s))
+          if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, (0.75 + 0.25 * s) * dim))
           // Halo twinkle opacity reduced by 50% as well.
-          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, 0.06 + 0.11 * s))
+          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, (0.06 + 0.11 * s) * dim))
         }
       })
     }
