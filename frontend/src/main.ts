@@ -301,7 +301,21 @@ async function screenshotWithCaption(
     ctx.fillStyle = '#000000'
     ctx.shadowBlur = 0
     ctx.shadowOffsetY = 0
-    ctx.fillText(footer, w * 0.5, h - Math.max(10, Math.floor(h * 0.02)))
+    const footerPadY = Math.max(10, Math.floor(h * 0.02))
+    const footerY = h - footerPadY
+    const footerPadX = Math.max(14, Math.floor(w * 0.03))
+    const footerBoxH = Math.ceil(footerSize * 1.65)
+    const footerBoxW = Math.min(w - border * 2, Math.ceil(ctx.measureText(footer).width + footerPadX * 2))
+    const footerBoxX = Math.floor(w * 0.5 - footerBoxW * 0.5)
+    const footerBoxY = Math.floor(footerY - footerBoxH)
+    // Semi-transparent white background for readability (60% opacity)
+    ctx.globalAlpha = 0.6
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(footerBoxX, footerBoxY, footerBoxW, footerBoxH)
+    // Text on top
+    ctx.globalAlpha = 0.9
+    ctx.fillStyle = '#000000'
+    ctx.fillText(footer, w * 0.5, footerY)
     ctx.restore()
 
     return out.toDataURL('image/png')
