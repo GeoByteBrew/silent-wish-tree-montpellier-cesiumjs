@@ -37,6 +37,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     done: 'C’est accroché. Télécharge ton souvenir.',
     download: 'Télécharger l’image',
     postcard: 'Carte postale',
+    postcardUsePeyrou: 'Vue Peyrou',
     total: 'Vœux au total',
     camera: 'Caméra',
     camCity: 'Promenade du Peyrou',
@@ -58,6 +59,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     done: 'Hung. Download your memory.',
     download: 'Download image',
     postcard: 'Postcard',
+    postcardUsePeyrou: 'Peyrou view',
     total: 'Total wishes',
     camera: 'Camera',
     camCity: 'Promenade du Peyrou',
@@ -717,6 +719,10 @@ async function init() {
           </div>
           <div class="row">
             <button class="secondary" id="postcardBtn" type="button"></button>
+            <label class="muted" style="display:flex;align-items:center;gap:8px;">
+              <input id="postcardPeyrouToggle" type="checkbox" checked />
+              <span id="postcardPeyrouLabel"></span>
+            </label>
           </div>
           ${
             DEBUG_MODE
@@ -988,6 +994,7 @@ async function init() {
     ;($('#hangBtn') as HTMLButtonElement).textContent = t('hang')
     ;($('#downloadBtn') as HTMLButtonElement).textContent = t('download')
     ;($('#postcardBtn') as HTMLButtonElement).textContent = t('postcard')
+    ;($('#postcardPeyrouLabel') as HTMLSpanElement).textContent = t('postcardUsePeyrou')
     ;($('#camLabel') as HTMLDivElement).textContent = t('camera')
     ;($('#camCityBtn') as HTMLButtonElement).textContent = t('camCity')
     ;($('#camTreeBtn') as HTMLButtonElement).textContent = t('camTree')
@@ -2708,6 +2715,7 @@ async function init() {
   const hangBtn = $('#hangBtn') as HTMLButtonElement
   const downloadBtn = $('#downloadBtn') as HTMLButtonElement
   const postcardBtn = $('#postcardBtn') as HTMLButtonElement
+  const postcardPeyrouToggle = $('#postcardPeyrouToggle') as HTMLInputElement
   const wishInput = $('#wishInput') as HTMLTextAreaElement
   const newSessionBtn = $('#newSessionBtn') as HTMLButtonElement
 
@@ -2747,6 +2755,12 @@ async function init() {
   postcardBtn.onclick = async () => {
     try {
       postcardBtn.disabled = true
+      if (postcardPeyrouToggle.checked) {
+        // Ensure postcard is captured from Peyrou view by default.
+        await flyToCity()
+        // Let one frame render after the camera flight.
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+      }
       const stamp = formatLocalTimestamp()
       const caption =
         lang === 'fr'
