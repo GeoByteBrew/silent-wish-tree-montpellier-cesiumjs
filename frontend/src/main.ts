@@ -47,6 +47,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     reveal: 'Révélation',
     revealNotYet: 'Pas encore. Rendez-vous le 6 janvier 2026.',
     openLinkedIn: 'Partager sur LinkedIn',
+    footer: "Sans compte · Sans e‑mail · Les vœux individuels ne sont jamais affichés · Créé par Irem Cagbayir",
   },
   en: {
     title: 'Montpellier – Silent Wish Tree',
@@ -69,6 +70,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     reveal: 'Reveal',
     revealNotYet: 'Not yet. See you on Jan 6, 2026.',
     openLinkedIn: 'Share on LinkedIn',
+    footer: 'No account · No email · Individual wishes are never displayed · Created by Irem Cagbayir',
   },
 }
 
@@ -253,7 +255,7 @@ async function screenshotWithCaption(
     // Headline (two lines, 50% opacity)
     const l1 = lang === 'fr' ? 'Joyeux Noël' : 'Merry Christmas'
     const l2 = lang === 'fr' ? 'Bonne année' : 'Happy New Year'
-    const titleSize = Math.max(44, Math.floor(h * 0.085))
+    const titleSize = Math.max(44, Math.floor(h * 0.085)) + 2
     const lineH = Math.floor(titleSize * 0.85)
     ctx.save()
     ctx.globalAlpha = 0.5
@@ -266,7 +268,22 @@ async function screenshotWithCaption(
     ctx.shadowOffsetY = 2
     const topPad = Math.max(10, Math.floor(h * 0.03)) + 15
     ctx.fillText(l1, w * 0.5, topPad)
-    ctx.fillText(l2, w * 0.5, topPad + lineH)
+    // Add a small connector between the two lines
+    const midSize = Math.max(22, Math.floor(titleSize * 0.62))
+    ctx.font = `700 ${midSize}px Tangerine, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+    ctx.fillText('&', w * 0.5, topPad + lineH - Math.floor(midSize * 0.05))
+
+    // Subtle heart accent to add warmth (not an emoji; simple typographic heart)
+    ctx.fillStyle = '#c1121f'
+    ctx.globalAlpha = 0.28
+    ctx.font = `700 ${Math.max(20, Math.floor(midSize * 0.85))}px Tangerine, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+    ctx.fillText('♥', w * 0.5 + Math.floor(midSize * 0.55), topPad + lineH - Math.floor(midSize * 0.02))
+
+    // Second line
+    ctx.globalAlpha = 0.5
+    ctx.fillStyle = '#ffffff'
+    ctx.font = `700 ${titleSize}px Tangerine, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
+    ctx.fillText(l2, w * 0.5, topPad + lineH + Math.floor(midSize * 0.6))
     ctx.restore()
 
     // Footer (small)
@@ -788,9 +805,7 @@ async function init() {
             : ''
         }
 
-        <div class="footer muted">
-          No account · No email · Individual wishes are never displayed
-    </div>
+        <div class="footer muted" id="footerText"></div>
       </aside>
   </div>
 `
@@ -1049,6 +1064,7 @@ async function init() {
     ;($('#camCityBtn') as HTMLButtonElement).textContent = t('camCity')
     ;($('#camTreeBtn') as HTMLButtonElement).textContent = t('camTree')
     ;($('#revealBtn') as HTMLButtonElement).textContent = t('reveal')
+    ;($('#footerText') as HTMLDivElement).textContent = t('footer')
 
     ;($('#langFr') as HTMLButtonElement).classList.toggle('active', lang === 'fr')
     ;($('#langEn') as HTMLButtonElement).classList.toggle('active', lang === 'en')
