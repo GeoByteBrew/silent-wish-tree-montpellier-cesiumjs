@@ -38,7 +38,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     download: 'Télécharger l’image',
     total: 'Vœux au total',
     camera: 'Caméra',
-    camCity: 'Ville',
+    camCity: 'Promenade du Peyrou',
     camTree: 'Arbre',
     errorMissing: 'Ajoute un vœu et complète le captcha.',
     errorServer: 'Erreur serveur. Réessaie.',
@@ -58,7 +58,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     download: 'Download image',
     total: 'Total wishes',
     camera: 'Camera',
-    camCity: 'City',
+    camCity: 'Promenade du Peyrou',
     camTree: 'Tree',
     errorMissing: 'Please write a wish and complete the captcha.',
     errorServer: 'Server error. Try again.',
@@ -1076,9 +1076,9 @@ async function init() {
         viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
       }
 
-      // Visibility rule: if camera is >30m horizontally from the tree, hide ornaments and light halos.
+      // Visibility rule: if camera is >45m horizontally from the tree, hide ornaments and light halos.
       // Use horizontal distance (d) so small height changes don't flicker.
-      const nextFar = d > 30
+      const nextFar = d > 45
       if (nextFar !== farHide) {
         farHide = nextFar
         // Hide/show ornaments
@@ -2443,12 +2443,37 @@ async function init() {
   }
 
   const flyToCity = async () => {
-    const lon = Number.isFinite(env.cameraCityLon) ? env.cameraCityLon : camLonDeg
-    const lat = Number.isFinite(env.cameraCityLat) ? env.cameraCityLat : camLatDeg
-    const height = Number.isFinite(env.cameraCityHeight) ? env.cameraCityHeight : 350
-    const heading = Number.isFinite(env.cameraCityHeadingDeg) ? env.cameraCityHeadingDeg : 0
-    const pitch = Number.isFinite(env.cameraCityPitchDeg) ? env.cameraCityPitchDeg : -35
-    const roll = Number.isFinite(env.cameraCityRollDeg) ? env.cameraCityRollDeg : 0
+    // Default City preset: if VITE_CAMERA_CITY_* is not set, fall back to the START view values.
+    const lon = Number.isFinite(env.cameraCityLon)
+      ? env.cameraCityLon
+      : Number.isFinite(env.cameraStartLon)
+        ? env.cameraStartLon
+        : camLonDeg
+    const lat = Number.isFinite(env.cameraCityLat)
+      ? env.cameraCityLat
+      : Number.isFinite(env.cameraStartLat)
+        ? env.cameraStartLat
+        : camLatDeg
+    const height = Number.isFinite(env.cameraCityHeight)
+      ? env.cameraCityHeight
+      : Number.isFinite(env.cameraStartHeight)
+        ? env.cameraStartHeight
+        : 350
+    const heading = Number.isFinite(env.cameraCityHeadingDeg)
+      ? env.cameraCityHeadingDeg
+      : Number.isFinite(env.cameraStartHeadingDeg)
+        ? env.cameraStartHeadingDeg
+        : 0
+    const pitch = Number.isFinite(env.cameraCityPitchDeg)
+      ? env.cameraCityPitchDeg
+      : Number.isFinite(env.cameraStartPitchDeg)
+        ? env.cameraStartPitchDeg
+        : -35
+    const roll = Number.isFinite(env.cameraCityRollDeg)
+      ? env.cameraCityRollDeg
+      : Number.isFinite(env.cameraStartRollDeg)
+        ? env.cameraStartRollDeg
+        : 0
     await viewer.camera.flyTo({
       destination: Cartesian3.fromDegrees(lon, lat, height),
       orientation: { heading: CesiumMath.toRadians(heading), pitch: CesiumMath.toRadians(pitch), roll: CesiumMath.toRadians(roll) },
