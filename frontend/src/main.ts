@@ -2500,37 +2500,22 @@ async function init() {
   }
 
   const flyToCity = async () => {
-    // Default City preset: if VITE_CAMERA_CITY_* is not set, fall back to the START view values.
-    let lon = Number.isFinite(env.cameraCityLon)
-      ? env.cameraCityLon
-      : Number.isFinite(env.cameraStartLon)
-        ? env.cameraStartLon
-        : camLonDeg
-    let lat = Number.isFinite(env.cameraCityLat)
-      ? env.cameraCityLat
-      : Number.isFinite(env.cameraStartLat)
-        ? env.cameraStartLat
-        : camLatDeg
-    const height = Number.isFinite(env.cameraCityHeight)
-      ? env.cameraCityHeight
-      : Number.isFinite(env.cameraStartHeight)
-        ? env.cameraStartHeight
-        : 350
-    const heading = Number.isFinite(env.cameraCityHeadingDeg)
-      ? env.cameraCityHeadingDeg
-      : Number.isFinite(env.cameraStartHeadingDeg)
-        ? env.cameraStartHeadingDeg
-        : 0
-    const pitch = Number.isFinite(env.cameraCityPitchDeg)
-      ? env.cameraCityPitchDeg
-      : Number.isFinite(env.cameraStartPitchDeg)
-        ? env.cameraStartPitchDeg
-        : -35
-    const roll = Number.isFinite(env.cameraCityRollDeg)
-      ? env.cameraCityRollDeg
-      : Number.isFinite(env.cameraStartRollDeg)
-        ? env.cameraStartRollDeg
-        : 0
+    // Promenade du Peyrou preset.
+    // If VITE_CAMERA_CITY_* is not set, use these built-in Peyrou defaults (NOT the start view).
+    const PEYROU = {
+      lon: 3.8716984385445214,
+      lat: 43.61151107130465,
+      height: 140.9540352778667,
+      headingDeg: 253.385478733541,
+      pitchDeg: -8.555908095160738,
+      rollDeg: 0.00048627181085250166,
+    }
+    let lon = Number.isFinite(env.cameraCityLon) ? env.cameraCityLon : PEYROU.lon
+    let lat = Number.isFinite(env.cameraCityLat) ? env.cameraCityLat : PEYROU.lat
+    const height = Number.isFinite(env.cameraCityHeight) ? env.cameraCityHeight : PEYROU.height
+    const heading = Number.isFinite(env.cameraCityHeadingDeg) ? env.cameraCityHeadingDeg : PEYROU.headingDeg
+    const pitch = Number.isFinite(env.cameraCityPitchDeg) ? env.cameraCityPitchDeg : PEYROU.pitchDeg
+    const roll = Number.isFinite(env.cameraCityRollDeg) ? env.cameraCityRollDeg : PEYROU.rollDeg
     // Safety: if city coords end up invalid/outside Montpellier, fall back to camera focus.
     const inMontpellierCam = (la: number, lo: number) => la >= 43 && la <= 44 && lo >= 3 && lo <= 4
     if (!inMontpellierCam(lat, lon) && inMontpellierCam(lon, lat)) {
