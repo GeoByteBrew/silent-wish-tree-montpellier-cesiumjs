@@ -68,6 +68,15 @@ const I18N: Record<Lang, Record<string, string>> = {
   },
 }
 
+const envNum = (key: string): number => {
+  const raw = (import.meta.env as any)?.[key]
+  if (typeof raw !== 'string') return Number.NaN
+  const s = raw.trim()
+  if (!s) return Number.NaN
+  const n = Number(s)
+  return Number.isFinite(n) ? n : Number.NaN
+}
+
 const env = {
   ionToken: (import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined)?.trim(),
   photorealisticAssetId: Number((import.meta.env.VITE_ION_PHOTOREALISTIC_ASSET_ID as string | undefined)?.trim() ?? ''),
@@ -99,20 +108,20 @@ const env = {
 
   cameraLat: Number((import.meta.env.VITE_CAMERA_LAT as string | undefined)?.trim() ?? ''),
   cameraLon: Number((import.meta.env.VITE_CAMERA_LON as string | undefined)?.trim() ?? ''),
-  cameraStartLon: Number((import.meta.env.VITE_CAMERA_START_LON as string | undefined)?.trim() ?? ''),
-  cameraStartLat: Number((import.meta.env.VITE_CAMERA_START_LAT as string | undefined)?.trim() ?? ''),
-  cameraStartHeight: Number((import.meta.env.VITE_CAMERA_START_HEIGHT as string | undefined)?.trim() ?? ''),
-  cameraStartHeadingDeg: Number((import.meta.env.VITE_CAMERA_START_HEADING_DEG as string | undefined)?.trim() ?? ''),
-  cameraStartPitchDeg: Number((import.meta.env.VITE_CAMERA_START_PITCH_DEG as string | undefined)?.trim() ?? ''),
-  cameraStartRollDeg: Number((import.meta.env.VITE_CAMERA_START_ROLL_DEG as string | undefined)?.trim() ?? ''),
+  cameraStartLon: envNum('VITE_CAMERA_START_LON'),
+  cameraStartLat: envNum('VITE_CAMERA_START_LAT'),
+  cameraStartHeight: envNum('VITE_CAMERA_START_HEIGHT'),
+  cameraStartHeadingDeg: envNum('VITE_CAMERA_START_HEADING_DEG'),
+  cameraStartPitchDeg: envNum('VITE_CAMERA_START_PITCH_DEG'),
+  cameraStartRollDeg: envNum('VITE_CAMERA_START_ROLL_DEG'),
 
   // Optional: City camera preset (for the "City" button)
-  cameraCityLon: Number((import.meta.env.VITE_CAMERA_CITY_LON as string | undefined)?.trim() ?? ''),
-  cameraCityLat: Number((import.meta.env.VITE_CAMERA_CITY_LAT as string | undefined)?.trim() ?? ''),
-  cameraCityHeight: Number((import.meta.env.VITE_CAMERA_CITY_HEIGHT as string | undefined)?.trim() ?? ''),
-  cameraCityHeadingDeg: Number((import.meta.env.VITE_CAMERA_CITY_HEADING_DEG as string | undefined)?.trim() ?? ''),
-  cameraCityPitchDeg: Number((import.meta.env.VITE_CAMERA_CITY_PITCH_DEG as string | undefined)?.trim() ?? ''),
-  cameraCityRollDeg: Number((import.meta.env.VITE_CAMERA_CITY_ROLL_DEG as string | undefined)?.trim() ?? ''),
+  cameraCityLon: envNum('VITE_CAMERA_CITY_LON'),
+  cameraCityLat: envNum('VITE_CAMERA_CITY_LAT'),
+  cameraCityHeight: envNum('VITE_CAMERA_CITY_HEIGHT'),
+  cameraCityHeadingDeg: envNum('VITE_CAMERA_CITY_HEADING_DEG'),
+  cameraCityPitchDeg: envNum('VITE_CAMERA_CITY_PITCH_DEG'),
+  cameraCityRollDeg: envNum('VITE_CAMERA_CITY_ROLL_DEG'),
 }
 
 const ORNAMENTS = [
@@ -2444,12 +2453,12 @@ async function init() {
 
   const flyToCity = async () => {
     // Default City preset: if VITE_CAMERA_CITY_* is not set, fall back to the START view values.
-    const lon = Number.isFinite(env.cameraCityLon)
+    let lon = Number.isFinite(env.cameraCityLon)
       ? env.cameraCityLon
       : Number.isFinite(env.cameraStartLon)
         ? env.cameraStartLon
         : camLonDeg
-    const lat = Number.isFinite(env.cameraCityLat)
+    let lat = Number.isFinite(env.cameraCityLat)
       ? env.cameraCityLat
       : Number.isFinite(env.cameraStartLat)
         ? env.cameraStartLat
@@ -2474,6 +2483,18 @@ async function init() {
       : Number.isFinite(env.cameraStartRollDeg)
         ? env.cameraStartRollDeg
         : 0
+    // Safety: if city coords end up invalid/outside Montpellier, fall back to camera focus.
+    const inMontpellierCam = (la: number, lo: number) => la >= 43 && la <= 44 && lo >= 3 && lo <= 4
+    if (!inMontpellierCam(lat, lon) && inMontpellierCam(lon, lat)) {
+      // swapped
+      ;[lat, lon] = [lon, lat]
+    }
+    if (!inMontpellierCam(lat, lon)) {
+      // fallback to focus
+      lon = camLonDeg
+      lat = camLatDeg
+    }
+
     await viewer.camera.flyTo({
       destination: Cartesian3.fromDegrees(lon, lat, height),
       orientation: { heading: CesiumMath.toRadians(heading), pitch: CesiumMath.toRadians(pitch), roll: CesiumMath.toRadians(roll) },
