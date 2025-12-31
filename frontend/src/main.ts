@@ -1068,9 +1068,9 @@ async function init() {
         viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
       }
 
-      // Visibility rule: if camera is >25m horizontally from the tree, hide ornaments and light halos.
+      // Visibility rule: if camera is >30m horizontally from the tree, hide ornaments and light halos.
       // Use horizontal distance (d) so small height changes don't flicker.
-      const nextFar = d > 25
+      const nextFar = d > 30
       if (nextFar !== farHide) {
         farHide = nextFar
         // Hide/show ornaments
