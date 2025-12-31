@@ -1012,8 +1012,6 @@ async function init() {
   const scratchCamEnu = new Cartesian3()
   const scratchClampedEnu = new Cartesian3()
   const scratchClampedEcef = new Cartesian3()
-  const scratchCamCarto = new Cartographic()
-  const scratchCamFixed = new Cartesian3()
   let farHide = false
   viewer.scene.preUpdate.addEventListener(() => {
     try {
@@ -1053,29 +1051,25 @@ async function init() {
         scratchClampedEnu.y = n
         scratchClampedEnu.z = h
       }
+
+      // Camera height clamp:
+      // With photorealistic 3D Tiles, globe.getHeight() is not a reliable “ground” (it can be null/0),
+      // which can trap the camera “underground” inside tiles. Instead, clamp in the tree-local ENU frame:
+      // - min: 1m above the ENU origin (tree center)
+      // - max: 50m above the ENU origin
+      const MIN_Z = 1
+      const MAX_Z = 50
+      if (scratchClampedEnu.z < MIN_Z) {
+        scratchClampedEnu.z = MIN_Z
+        changed = true
+      } else if (scratchClampedEnu.z > MAX_Z) {
+        scratchClampedEnu.z = MAX_Z
+        changed = true
+      }
+
       if (changed) {
         Matrix4.multiplyByPoint(scratchEnu, scratchClampedEnu, scratchClampedEcef)
         viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
-      }
-
-      // Camera height clamp (requested):
-      // - max 50m above ground
-      // - never go below ground
-      const camCarto = viewer.scene.globe.ellipsoid.cartesianToCartographic(viewer.camera.position, scratchCamCarto)
-      if (camCarto) {
-        const ground = viewer.scene.globe.getHeight(camCarto) ?? 0
-        const minAbove = 0.5
-        const maxAbove = 50
-        const minH = ground + minAbove
-        const maxH = ground + maxAbove
-        if (Number.isFinite(camCarto.height)) {
-          const clamped = Math.min(Math.max(camCarto.height, minH), maxH)
-          if (clamped !== camCarto.height) {
-            camCarto.height = clamped
-            const fixed = viewer.scene.globe.ellipsoid.cartographicToCartesian(camCarto, scratchCamFixed)
-            if (fixed) viewer.camera.position = Cartesian3.clone(fixed, viewer.camera.position)
-          }
-        }
       }
 
       // Visibility rule: if camera is >25m horizontally from the tree, hide ornaments and light halos.
