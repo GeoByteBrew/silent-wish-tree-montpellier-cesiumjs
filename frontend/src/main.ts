@@ -201,7 +201,7 @@ function downloadDataUrl(filename: string, dataUrl: string) {
 async function screenshotWithCaption(
   viewer: Viewer,
   captionLines: string[],
-  opts?: { watermark?: string },
+  opts?: { watermark?: string; frameLang?: 'fr' | 'en' },
 ): Promise<string> {
   // Ensure custom fonts are loaded before rendering canvas text (especially on first use).
   try {
@@ -212,6 +212,27 @@ async function screenshotWithCaption(
     // ignore
   }
 
+  // Optional postcard frame overlay (transparent center)
+  const loadFrame = async (lang: 'fr' | 'en'): Promise<HTMLImageElement | null> => {
+    const src = lang === 'fr' ? '/frames/Frame_FR.png' : '/frames/Frame_EN.png'
+    try {
+      const img = new Image()
+      img.decoding = 'async'
+      img.src = src
+      // decode() is supported in modern browsers; fall back to onload
+      if ('decode' in img) await (img as any).decode()
+      else {
+        await new Promise<void>((resolve, reject) => {
+          ;(img as HTMLImageElement).onload = () => resolve()
+          ;(img as HTMLImageElement).onerror = () => reject(new Error(`Failed to load frame: ${src}`))
+        })
+      }
+      return img
+    } catch {
+      return null
+    }
+  }
+
   // ensure a frame is rendered
   viewer.render()
   const srcCanvas = viewer.scene.canvas
@@ -219,6 +240,20 @@ async function screenshotWithCaption(
   const h = srcCanvas.height
   const pad = Math.max(16, Math.floor(Math.min(w, h) * 0.02))
   const footerH = Math.max(90, Math.floor(h * 0.14))
+
+  // If a postcard frame is requested, output a single image sized like the Cesium canvas
+  // and overlay the frame PNG (with transparent center) on top of the render.
+  if (opts?.frameLang) {
+    const out = document.createElement('canvas')
+    out.width = w
+    out.height = h
+    const ctx = out.getContext('2d')
+    if (!ctx) throw new Error('No 2D context')
+    ctx.drawImage(srcCanvas, 0, 0, w, h)
+    const frame = await loadFrame(opts.frameLang)
+    if (frame) ctx.drawImage(frame, 0, 0, w, h)
+    return out.toDataURL('image/png')
+  }
 
   const out = document.createElement('canvas')
   out.width = w
@@ -2761,6 +2796,7 @@ async function init() {
 
       const dataUrl = await screenshotWithCaption(viewer, caption, {
         watermark: lang === 'fr' ? 'Souvenir de Montpellier' : 'Montpellier memory',
+        frameLang: lang,
       })
       downloadBtn.disabled = false
       downloadBtn.onclick = () => downloadDataUrl('silent-wish-montpellier.png', dataUrl)
