@@ -242,9 +242,9 @@ async function screenshotWithCaption(
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, w, h)
 
-    // 5px border + image inset
-    const border = 5
-    ctx.fillStyle = '#0b0f14'
+    // 10px red border + image inset
+    const border = 10
+    ctx.fillStyle = '#c1121f'
     ctx.fillRect(0, 0, w, h)
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(border, border, w - border * 2, h - border * 2)
@@ -264,7 +264,7 @@ async function screenshotWithCaption(
     ctx.shadowColor = 'rgba(0,0,0,0.35)'
     ctx.shadowBlur = 10
     ctx.shadowOffsetY = 2
-    const topPad = Math.max(10, Math.floor(h * 0.03))
+    const topPad = Math.max(10, Math.floor(h * 0.03)) + 15
     ctx.fillText(l1, w * 0.5, topPad)
     ctx.fillText(l2, w * 0.5, topPad + lineH)
     ctx.restore()
@@ -281,10 +281,9 @@ async function screenshotWithCaption(
     ctx.textAlign = 'center'
     ctx.textBaseline = 'bottom'
     ctx.font = `400 ${footerSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`
-    ctx.fillStyle = '#ffffff'
-    ctx.shadowColor = 'rgba(0,0,0,0.35)'
-    ctx.shadowBlur = 8
-    ctx.shadowOffsetY = 2
+    ctx.fillStyle = '#000000'
+    ctx.shadowBlur = 0
+    ctx.shadowOffsetY = 0
     ctx.fillText(footer, w * 0.5, h - Math.max(10, Math.floor(h * 0.02)))
     ctx.restore()
 
