@@ -36,6 +36,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     hanging: 'Accrochage…',
     done: 'C’est accroché. Télécharge ton souvenir.',
     download: 'Télécharger l’image',
+    postcard: 'Carte postale',
     total: 'Vœux au total',
     camera: 'Caméra',
     camCity: 'Promenade du Peyrou',
@@ -56,6 +57,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     hanging: 'Hanging…',
     done: 'Hung. Download your memory.',
     download: 'Download image',
+    postcard: 'Postcard',
     total: 'Total wishes',
     camera: 'Camera',
     camCity: 'Promenade du Peyrou',
@@ -713,6 +715,9 @@ async function init() {
             <button class="ghost" id="camCityBtn"></button>
             <button class="ghost" id="camTreeBtn"></button>
           </div>
+          <div class="row">
+            <button class="secondary" id="postcardBtn" type="button"></button>
+          </div>
           ${
             DEBUG_MODE
               ? `<div class="row">
@@ -982,6 +987,7 @@ async function init() {
     $('#wishLabel').textContent = t('wish')
     ;($('#hangBtn') as HTMLButtonElement).textContent = t('hang')
     ;($('#downloadBtn') as HTMLButtonElement).textContent = t('download')
+    ;($('#postcardBtn') as HTMLButtonElement).textContent = t('postcard')
     ;($('#camLabel') as HTMLDivElement).textContent = t('camera')
     ;($('#camCityBtn') as HTMLButtonElement).textContent = t('camCity')
     ;($('#camTreeBtn') as HTMLButtonElement).textContent = t('camTree')
@@ -2701,6 +2707,7 @@ async function init() {
   // Turnstile
   const hangBtn = $('#hangBtn') as HTMLButtonElement
   const downloadBtn = $('#downloadBtn') as HTMLButtonElement
+  const postcardBtn = $('#postcardBtn') as HTMLButtonElement
   const wishInput = $('#wishInput') as HTMLTextAreaElement
   const newSessionBtn = $('#newSessionBtn') as HTMLButtonElement
 
@@ -2735,6 +2742,24 @@ async function init() {
   // Optional: click tree to refocus
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
   handler.setInputAction(() => void flyToTreeFocus(), ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
+
+  // Postcard download (no wish required): use FR/EN transparent PNG frame.
+  postcardBtn.onclick = async () => {
+    try {
+      postcardBtn.disabled = true
+      const stamp = formatLocalTimestamp()
+      const caption =
+        lang === 'fr'
+          ? ['Montpellier – Arbre à vœux silencieux – 2026', `Partagé : ${stamp} (Montpellier)`]
+          : ['Montpellier – Silent Wish Tree – 2026', `Shared: ${stamp} (Montpellier)`]
+      const dataUrl = await screenshotWithCaption(viewer, caption, { frameLang: lang })
+      downloadDataUrl(`silent-wish-postcard-${lang}.png`, dataUrl)
+    } catch (e) {
+      setStatus(`Postcard failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      postcardBtn.disabled = false
+    }
+  }
 
   hangBtn.onclick = async () => {
     const text = wishInput.value.trim()
