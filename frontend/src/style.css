@@ -331,7 +331,8 @@ button:disabled {
   }
   /* Collapsed state: slide panel mostly off-screen */
   body.panel-collapsed .panel {
-    transform: translateX(calc(100% - 18px));
+    transform: translateX(100%);
+    pointer-events: none;
   }
 
   .panel-toggle {
