@@ -720,6 +720,7 @@ async function init() {
     <div class="layout">
       <div class="scene">
         <div id="cesium"></div>
+        <button class="panel-toggle" id="panelToggleBtn" type="button" aria-label="Toggle panel"></button>
         <div class="loading" id="loadingOverlay" aria-live="polite">
           <div class="spinner" aria-hidden="true"></div>
           <div class="loading-title">Loading Montpellier…</div>
@@ -832,6 +833,7 @@ async function init() {
 
   const t = (k: string) => I18N[lang][k] ?? k
   const status = $('#status') as HTMLDivElement
+  const panelToggleBtn = document.querySelector('#panelToggleBtn') as HTMLButtonElement | null
   const loadingOverlay = $('#loadingOverlay') as HTMLDivElement
   const loadingText = $('#loadingText') as HTMLDivElement
   const setLoading = (on: boolean, msg?: string) => {
@@ -872,6 +874,42 @@ async function init() {
     statusLines.push(m)
     while (statusLines.length > 6) statusLines.shift()
     status.textContent = statusLines.join('\n')
+  }
+
+  // Mobile right-panel drawer toggle
+  const PANEL_COLLAPSED_KEY = 'silentwish_panel_collapsed_v1'
+  const isMobile = () => window.matchMedia && window.matchMedia('(max-width: 980px)').matches
+  const applyPanelCollapsed = (collapsed: boolean) => {
+    document.body.classList.toggle('panel-collapsed', collapsed)
+    if (panelToggleBtn) {
+      panelToggleBtn.setAttribute('aria-expanded', String(!collapsed))
+      panelToggleBtn.title = collapsed ? 'Open panel' : 'Close panel'
+    }
+    try {
+      localStorage.setItem(PANEL_COLLAPSED_KEY, collapsed ? '1' : '0')
+    } catch {
+      // ignore
+    }
+  }
+  const readPanelCollapsed = () => {
+    try {
+      return localStorage.getItem(PANEL_COLLAPSED_KEY) === '1'
+    } catch {
+      return false
+    }
+  }
+  // Apply on load only for mobile
+  if (isMobile()) applyPanelCollapsed(readPanelCollapsed())
+  window.addEventListener('resize', () => {
+    // If leaving mobile, ensure panel isn't stuck half-hidden
+    if (!isMobile()) document.body.classList.remove('panel-collapsed')
+    else applyPanelCollapsed(readPanelCollapsed())
+  })
+  if (panelToggleBtn) {
+    panelToggleBtn.onclick = () => {
+      const collapsed = document.body.classList.contains('panel-collapsed')
+      applyPanelCollapsed(!collapsed)
+    }
   }
 
   // --- Layout persistence helpers ---
