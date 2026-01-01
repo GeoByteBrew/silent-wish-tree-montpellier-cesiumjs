@@ -493,6 +493,12 @@ async function fetchIonGeoJson(assetId: number): Promise<any> {
   return await r.json()
 }
 
+async function fetchLocalGeoJson(url: string): Promise<any> {
+  const r = await fetch(url, { cache: 'no-store' })
+  if (!r.ok) throw new Error(`GeoJSON HTTP ${r.status}`)
+  return await r.json()
+}
+
 function extractLonLatPointsFromGeoJson(geo: any): Array<{ lon: number; lat: number; note?: string }> {
   const pts: Array<{ lon: number; lat: number; note?: string }> = []
   if (!geo) return pts
@@ -2219,12 +2225,22 @@ async function init() {
     }
   })
 
-  // Optional: extra trees (single model instanced at many points from ion GeoJSON)
+  // Optional: extra trees (model instanced at many points)
+  // Desired behavior: local-first (Vercel-served files) and fallback to ion if local fails.
   const hasExtraTrees = Number.isFinite(env.ionExtraTreesModelAssetId) && env.ionExtraTreesModelAssetId > 0
   const hasExtraTreesGeo = Number.isFinite(env.ionExtraTreesGeojsonAssetId) && env.ionExtraTreesGeojsonAssetId > 0
-  if (hasExtraTrees && hasExtraTreesGeo) {
+  const localExtraTreesGeoUrl = '/trees/trees_peyrau84.geojson'
+  const localExtraTreesModelUrl = '/models/pyr_tree_big.glb'
+  if (true) {
     try {
-      const geo = await fetchIonGeoJson(env.ionExtraTreesGeojsonAssetId)
+      // GeoJSON: try local first, then ion
+      let geo: any = null
+      try {
+        geo = await fetchLocalGeoJson(localExtraTreesGeoUrl)
+      } catch {
+        if (hasExtraTreesGeo) geo = await fetchIonGeoJson(env.ionExtraTreesGeojsonAssetId)
+        else throw new Error('No extra trees GeoJSON available (local missing and ion not configured).')
+      }
       const ptsRaw = extractLonLatPointsFromGeoJson(geo)
       const pts: Array<{ lon: number; lat: number }> = ptsRaw.map((p) => ({ lon: p.lon, lat: p.lat }))
       if (ptsRaw.length) {
@@ -2296,13 +2312,13 @@ async function init() {
       let heights =
         has3DTiles ? await sampleGroundHeightMinForPoints(shiftedPtsInitial, radius) : new Array(shiftedPtsInitial.length).fill(0)
 
-      const url = await IonResource.fromAssetId(env.ionExtraTreesModelAssetId)
-      const extraTreeEntities: string[] = []
-
       // Estimate model "half height" for pivot compensation when scaling.
       // Many models have pivot around center; scaling then visually shifts ground contact.
       // We'll approximate using the bounding sphere radius.
       let modelRadiusM: number | null = null
+
+      // Model: try local first, then ion
+      let url: any = localExtraTreesModelUrl
       try {
         const tmp = await Model.fromGltfAsync({ url, modelMatrix: Matrix4.IDENTITY, scale: 1.0 })
         tmp.show = false
@@ -2310,8 +2326,20 @@ async function init() {
         modelRadiusM = tmp.boundingSphere?.radius ?? null
         viewer.scene.primitives.remove(tmp)
       } catch {
-        modelRadiusM = null
+        if (!hasExtraTrees) throw new Error('No extra trees model available (local missing and ion not configured).')
+        url = await IonResource.fromAssetId(env.ionExtraTreesModelAssetId)
+        try {
+          const tmp = await Model.fromGltfAsync({ url, modelMatrix: Matrix4.IDENTITY, scale: 1.0 })
+          tmp.show = false
+          viewer.scene.primitives.add(tmp)
+          modelRadiusM = tmp.boundingSphere?.radius ?? null
+          viewer.scene.primitives.remove(tmp)
+        } catch {
+          modelRadiusM = null
+        }
       }
+      const extraTreeEntities: string[] = []
+      // (modelRadiusM is set above)
 
       const renderExtraTrees = async (eM: number, nM: number, opts: { resample: boolean }) => {
         // Remove previous
