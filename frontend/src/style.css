@@ -336,8 +336,9 @@ button:disabled {
   }
 
   .panel-toggle {
-    position: absolute;
-    right: 10px;
+    /* Fixed so it never ends up under the panel (different stacking contexts on mobile) */
+    position: fixed;
+    right: max(10px, env(safe-area-inset-right));
     top: 50%;
     transform: translateY(-50%);
     width: 34px;
@@ -347,7 +348,7 @@ button:disabled {
     border: 1px solid rgba(255, 255, 255, 0.14);
     backdrop-filter: blur(10px);
     color: #eaf1ff;
-    z-index: 31;
+    z-index: 9999;
     display: inline-flex;
     align-items: center;
     justify-content: center;
