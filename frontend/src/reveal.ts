@@ -70,7 +70,7 @@ async function main() {
   const j = await r.json()
 
   if (j?.notYet) {
-    $('#status').textContent = 'Not yet — see you on Jan 6, 2026.'
+    $('#status').textContent = 'Not yet — see you on Jan 6, 2026 at 19:00.'
     return
   }
   const words = (j?.words ?? []) as Word[]

@@ -56,12 +56,10 @@ For pre-deploy testing you can temporarily set `DEMO_KEY` and put the same value
 
 1. Copy `frontend/env.example` to `frontend/.env.local` and fill values.
 2. Add your models:
-   - `frontend/public/models/tree.glb`
-   - `frontend/public/models/ornaments/star.glb`
-   - `frontend/public/models/ornaments/ball_red.glb`
-   - `frontend/public/models/ornaments/ball_gold.glb`
-   - `frontend/public/models/ornaments/bell.glb`
-   - `frontend/public/models/ornaments/candy.glb`
+   - Main tree: `frontend/public/models/tree4.glb`
+   - Ornaments: `frontend/public/models/ornaments/*.glb`
+   - Extra trees (local-first): `frontend/public/models/pyr_tree_big_green.glb`
+   - Extra trees points (local-first): `frontend/public/trees/trees_peyrau84.geojson`
 
 Run locally:
 
@@ -84,13 +82,6 @@ Deploy `frontend/` as a Vercel project:
 - Add the `VITE_*` env vars in Vercel project settings
 
 Supabase Edge Functions stay hosted on Supabase.
-
-### Keep the repo private (recommended)
-
-Do **not** commit real tokens/keys. Keep the GitHub repo private and set secrets in:
-
-- Vercel project env vars: `VITE_*`
-- Supabase Edge Function secrets: `SUPABASE_*`, `TURNSTILE_SECRET_KEY`, `REVEAL_AT_ISO`
 
 ## Notes on “anonymity”
 

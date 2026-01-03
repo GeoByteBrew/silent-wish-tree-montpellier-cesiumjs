@@ -8,4 +8,25 @@ dist
 frontend/.env.local
 frontend/.env.*.local
 
+# Editor state
+.cursor/
+
+# Local build/debug artifacts
+frontend/.npm-cache/
+
+# Local content / exports (do not publish)
+*.blend
+3333/
+model/
+
+# GIS exports (keep generated data out of git)
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+
+# Scratch
+frontend/public/trees/test.txt
+
 

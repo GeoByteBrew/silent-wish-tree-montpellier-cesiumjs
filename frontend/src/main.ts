@@ -45,7 +45,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     errorMissing: 'Ajoute un vœu et complète le captcha.',
     errorServer: 'Erreur serveur. Réessaie.',
     reveal: 'Révélation',
-    revealNotYet: 'Pas encore. Rendez-vous le 6 janvier 2026.',
+    revealNotYet: 'Pas encore. Rendez-vous le 6 janvier 2026 à 19:00.',
     openLinkedIn: 'Partager sur LinkedIn',
     footer: "Sans compte · Sans e‑mail · Les vœux individuels ne sont jamais affichés · Créé par Irem Cagbayir",
   },
@@ -68,7 +68,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     errorMissing: 'Please write a wish and complete the captcha.',
     errorServer: 'Server error. Try again.',
     reveal: 'Reveal',
-    revealNotYet: 'Not yet. See you on Jan 6, 2026.',
+    revealNotYet: 'Not yet. See you on Jan 6, 2026 at 19:00.',
     openLinkedIn: 'Share on LinkedIn',
     footer: 'No account · No email · Individual wishes are never displayed · Created by Irem Cagbayir',
   },
@@ -91,7 +91,8 @@ const env = {
   supabaseAnonKey: (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim(),
   turnstileSiteKey: (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined)?.trim(),
   apiBase: (import.meta.env.VITE_API_BASE as string | undefined)?.trim(), // optional override
-  revealDateIso: (import.meta.env.VITE_REVEAL_AT_ISO as string | undefined)?.trim() ?? '2026-01-06T00:00:00+01:00',
+  // Default: Jan 6, 2026 at 19:00 (Europe/Paris)
+  revealDateIso: (import.meta.env.VITE_REVEAL_AT_ISO as string | undefined)?.trim() ?? '2026-01-06T19:00:00+01:00',
   demoKey: (import.meta.env.VITE_DEMO_KEY as string | undefined)?.trim(), // used only for local testing
   treeLat: Number((import.meta.env.VITE_TREE_LAT as string | undefined)?.trim() ?? ''),
   treeLon: Number((import.meta.env.VITE_TREE_LON as string | undefined)?.trim() ?? ''),
@@ -2268,7 +2269,8 @@ async function init() {
   const hasExtraTrees = Number.isFinite(env.ionExtraTreesModelAssetId) && env.ionExtraTreesModelAssetId > 0
   const hasExtraTreesGeo = Number.isFinite(env.ionExtraTreesGeojsonAssetId) && env.ionExtraTreesGeojsonAssetId > 0
   const localExtraTreesGeoUrl = '/trees/trees_peyrau84.geojson'
-  const localExtraTreesModelUrl = '/models/pyr_tree_big.glb'
+  // Use the "green" variant locally (leafy tree), fallback to ion model if local fails.
+  const localExtraTreesModelUrl = '/models/pyr_tree_big_green.glb'
   if (true) {
     try {
       // GeoJSON: try local first, then ion
@@ -2856,8 +2858,32 @@ async function init() {
   setInterval(() => void loadExistingOrnaments(), 15_000)
 
   ;($('#revealBtn') as HTMLButtonElement).onclick = async () => {
-    // Open the reveal page (it will handle "not yet" gating via the backend).
-    window.open('/reveal.html', '_blank', 'noopener,noreferrer')
+    // Reveal / Word cloud:
+    // - Before REVEAL_AT: show an in-app message (avoid opening a "not yet" page).
+    // - After REVEAL_AT: open the word cloud page.
+    if (!env.supabaseUrl || !env.supabaseAnonKey) {
+      setStatus('Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY')
+      return
+    }
+    try {
+      const demoQuery = env.demoKey ? `?demoKey=${encodeURIComponent(env.demoKey)}` : ''
+      const r = await fetch(`${env.supabaseUrl}/functions/v1/reveal${demoQuery}`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+          apikey: env.supabaseAnonKey,
+        },
+      })
+      const j = await r.json().catch(() => ({}))
+      if (j?.notYet) {
+        setStatus(t('revealNotYet'))
+        return
+      }
+      // Same tab: feels like part of the experience.
+      window.location.href = '/reveal.html'
+    } catch {
+      // If reveal check fails, still allow opening the page (it will show its own status).
+      window.location.href = '/reveal.html'
+    }
   }
 
   // Turnstile
