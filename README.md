@@ -47,7 +47,7 @@ supabase functions deploy reveal
 4. Set function secrets:
 
 ```bash
-supabase secrets set SUPABASE_URL="..." SUPABASE_SERVICE_ROLE_KEY="..." TURNSTILE_SECRET_KEY="..." REVEAL_AT_ISO="2026-01-06T00:00:00+01:00"
+supabase secrets set SUPABASE_URL="..." SUPABASE_SERVICE_ROLE_KEY="..." TURNSTILE_SECRET_KEY="..." REVEAL_AT_ISO="2026-01-06T19:00:00+01:00"
 ```
 
 For pre-deploy testing you can temporarily set `DEMO_KEY` and put the same value into `VITE_DEMO_KEY` (then remove it before publishing).

@@ -5,9 +5,10 @@ import { supabaseAdmin } from '../_shared/supabase.ts'
 import { tokenize } from '../_shared/tokenize.ts'
 
 function getRevealAt(): Date {
-  const iso = getEnv('REVEAL_AT_ISO') ?? '2026-01-06T00:00:00+01:00'
+  // Default: Jan 6, 2026 at 19:00 (Europe/Paris)
+  const iso = getEnv('REVEAL_AT_ISO') ?? '2026-01-06T19:00:00+01:00'
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return new Date('2026-01-06T00:00:00+01:00')
+  if (Number.isNaN(d.getTime())) return new Date('2026-01-06T19:00:00+01:00')
   return d
 }
 
