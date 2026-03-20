@@ -83,6 +83,11 @@ Deploy `frontend/` as a Vercel project:
 
 Supabase Edge Functions stay hosted on Supabase.
 
+## Performance (first load)
+
+- The loading overlay hides as soon as the main scene can render (after the start camera fly-to + 2 frames). **Extra trees** load in the background; their ground heights are sampled in **batches** (not one huge `sampleHeightMostDetailed` call) so the tab stays responsive with photorealistic 3D Tiles.
+- To reduce work further, lower `VITE_EXTRA_TREES_LIMIT` (e.g. 40 instead of 80).
+
 ## Notes on “anonymity”
 
 No account, no email. We store wish text in the database (not publicly readable) and only publish aggregated word frequencies on the reveal date.

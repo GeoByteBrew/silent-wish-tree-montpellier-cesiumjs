@@ -841,6 +841,12 @@ async function init() {
     loadingOverlay.style.display = on ? 'flex' : 'none'
     if (msg) loadingText.textContent = msg
   }
+  let initialLoadDismissed = false
+  const dismissInitialLoadingOverlay = () => {
+    if (initialLoadDismissed) return
+    initialLoadDismissed = true
+    setLoading(false)
+  }
   setLoading(true, 'Preparing 3D scene…')
   const statusLines: string[] = []
   // Keyboard focus: ensure only one editing mode reacts to shared keys.
@@ -1430,7 +1436,8 @@ async function init() {
     }
   }
 
-  async function sampleGroundHeightMinForPoints(
+  /** One batch of points (used to avoid a single huge sampleHeightMostDetailed with 3D Tiles). */
+  async function sampleGroundHeightMinForPointsChunk(
     pointsLonLat: Array<{ lon: number; lat: number }>,
     radiusM: number,
   ): Promise<Array<number | null>> {
@@ -1477,6 +1484,32 @@ async function init() {
     } catch {
       return result
     }
+  }
+
+  /**
+   * Sample min ground height per point. With photorealistic 3D Tiles, one giant call can freeze the tab for minutes.
+   * Batching + rAF yields keeps the main thread responsive and lets the first frame paint sooner.
+   */
+  async function sampleGroundHeightMinForPoints(
+    pointsLonLat: Array<{ lon: number; lat: number }>,
+    radiusM: number,
+    options?: { batchSize?: number; yieldBetweenBatches?: boolean },
+  ): Promise<Array<number | null>> {
+    const n = pointsLonLat.length
+    if (!n) return []
+    const batchSize = Math.max(1, options?.batchSize ?? n)
+    const yieldBetween = options?.yieldBetweenBatches ?? false
+    const result = new Array<number | null>(n).fill(null)
+    for (let start = 0; start < n; start += batchSize) {
+      const end = Math.min(n, start + batchSize)
+      const slice = pointsLonLat.slice(start, end)
+      const partial = await sampleGroundHeightMinForPointsChunk(slice, radiusM)
+      for (let i = 0; i < partial.length; i++) result[start + i] = partial[i]
+      if (yieldBetween && end < n) {
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+      }
+    }
+    return result
   }
 
   // Shift a lon/lat coordinate by ENU meters (east/north) around that coordinate.
@@ -2264,14 +2297,100 @@ async function init() {
     }
   })
 
-  // Optional: extra trees (model instanced at many points)
+  // Camera presets — run before extra trees so the user sees the main scene immediately
+  // (extra trees do heavy sampleHeightMostDetailed work in the background).
+  async function flyToStart() {
+    const sv = getLocalStartViewIfDebug()
+    const start: StartView = sv ?? {
+      lon: Number.isFinite(env.cameraStartLon) ? env.cameraStartLon : camLonDeg,
+      lat: Number.isFinite(env.cameraStartLat) ? env.cameraStartLat : camLatDeg,
+      height: Number.isFinite(env.cameraStartHeight) ? env.cameraStartHeight : 180,
+      heading: Number.isFinite(env.cameraStartHeadingDeg) ? env.cameraStartHeadingDeg : 25,
+      pitch: Number.isFinite(env.cameraStartPitchDeg) ? env.cameraStartPitchDeg : -25,
+      roll: Number.isFinite(env.cameraStartRollDeg) ? env.cameraStartRollDeg : 0,
+    }
+    await viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(start.lon, start.lat, start.height),
+      orientation: {
+        heading: CesiumMath.toRadians(start.heading),
+        pitch: CesiumMath.toRadians(start.pitch),
+        roll: CesiumMath.toRadians(start.roll),
+      },
+      duration: 0.9,
+    })
+  }
+
+  const flyToCity = async () => {
+    const PEYROU = {
+      lon: 3.8716984385445214,
+      lat: 43.61151107130465,
+      height: 140.9540352778667,
+      headingDeg: 253.385478733541,
+      pitchDeg: -8.555908095160738,
+      rollDeg: 0.00048627181085250166,
+    }
+    let lon = Number.isFinite(env.cameraCityLon) ? env.cameraCityLon : PEYROU.lon
+    let lat = Number.isFinite(env.cameraCityLat) ? env.cameraCityLat : PEYROU.lat
+    const height = Number.isFinite(env.cameraCityHeight) ? env.cameraCityHeight : PEYROU.height
+    const heading = Number.isFinite(env.cameraCityHeadingDeg) ? env.cameraCityHeadingDeg : PEYROU.headingDeg
+    const pitch = Number.isFinite(env.cameraCityPitchDeg) ? env.cameraCityPitchDeg : PEYROU.pitchDeg
+    const roll = Number.isFinite(env.cameraCityRollDeg) ? env.cameraCityRollDeg : PEYROU.rollDeg
+    const inMontpellierCam = (la: number, lo: number) => la >= 43 && la <= 44 && lo >= 3 && lo <= 4
+    if (!inMontpellierCam(lat, lon) && inMontpellierCam(lon, lat)) {
+      ;[lat, lon] = [lon, lat]
+    }
+    if (!inMontpellierCam(lat, lon)) {
+      lon = camLonDeg
+      lat = camLatDeg
+    }
+
+    await viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(lon, lat, height),
+      orientation: { heading: CesiumMath.toRadians(heading), pitch: CesiumMath.toRadians(pitch), roll: CesiumMath.toRadians(roll) },
+      duration: 1.2,
+    })
+  }
+
+  const flyToTreeFocus = async () => {
+    try {
+      if (treeModel) {
+        const p = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
+        const carto = Cartographic.fromCartesian(p)
+        if (Number.isFinite(carto.longitude) && Number.isFinite(carto.latitude)) {
+          const lon = CesiumMath.toDegrees(carto.longitude)
+          const lat = CesiumMath.toDegrees(carto.latitude)
+          await viewer.camera.flyTo({
+            destination: Cartesian3.fromDegrees(lon, lat, 120),
+            orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
+            duration: 1.0,
+          })
+          return
+        }
+      }
+    } catch {
+      // fallback below
+    }
+    await viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(camLonDeg, camLatDeg, 120),
+      orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
+      duration: 1.0,
+    })
+  }
+  ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
+  ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToStart()
+  void flyToStart()
+  await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+  dismissInitialLoadingOverlay()
+
+  // Optional: extra trees (model instanced at many points) — async so it doesn't block first paint.
   // Desired behavior: local-first (Vercel-served files) and fallback to ion if local fails.
-  const hasExtraTrees = Number.isFinite(env.ionExtraTreesModelAssetId) && env.ionExtraTreesModelAssetId > 0
-  const hasExtraTreesGeo = Number.isFinite(env.ionExtraTreesGeojsonAssetId) && env.ionExtraTreesGeojsonAssetId > 0
-  const localExtraTreesGeoUrl = '/trees/trees_peyrau84.geojson'
-  // Use the "green" variant locally (leafy tree), fallback to ion model if local fails.
-  const localExtraTreesModelUrl = '/models/pyr_tree_big_green.glb'
-  if (true) {
+  async function initExtraTreesSubsystem(): Promise<void> {
+    const hasExtraTrees = Number.isFinite(env.ionExtraTreesModelAssetId) && env.ionExtraTreesModelAssetId > 0
+    const hasExtraTreesGeo = Number.isFinite(env.ionExtraTreesGeojsonAssetId) && env.ionExtraTreesGeojsonAssetId > 0
+    const localExtraTreesGeoUrl = '/trees/trees_peyrau84.geojson'
+    const localExtraTreesModelUrl = '/models/pyr_tree_big_green.glb'
+    /** 12 trees × 9 height samples = 108 per batch (was 80×9=720 in one call → multi-minute stalls). */
+    const extraTreeHeightSampleOpts = { batchSize: 12, yieldBetweenBatches: true } as const
     try {
       // GeoJSON: try local first, then ion
       let geo: any = null
@@ -2350,7 +2469,9 @@ async function init() {
 
       // Sample ground initially. If offsets change, we will re-sample (debounced) to keep trees on the surface.
       let heights =
-        has3DTiles ? await sampleGroundHeightMinForPoints(shiftedPtsInitial, radius) : new Array(shiftedPtsInitial.length).fill(0)
+        has3DTiles
+          ? await sampleGroundHeightMinForPoints(shiftedPtsInitial, radius, extraTreeHeightSampleOpts)
+          : new Array(shiftedPtsInitial.length).fill(0)
 
       // Estimate model "half height" for pivot compensation when scaling.
       // Many models have pivot around center; scaling then visually shifts ground contact.
@@ -2391,7 +2512,7 @@ async function init() {
 
         const shiftedPts = computeShiftedPts(eM, nM)
         if (has3DTiles && opts.resample) {
-          heights = await sampleGroundHeightMinForPoints(shiftedPts, radius)
+          heights = await sampleGroundHeightMinForPoints(shiftedPts, radius, extraTreeHeightSampleOpts)
         }
         for (let i = 0; i < shiftedPts.length; i++) {
           const { lon, lat } = shiftedPts[i]
@@ -2642,97 +2763,7 @@ async function init() {
       setStatus(`Failed to load extra trees from ion. Details: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
-
-  // Camera presets
-  async function flyToStart() {
-    const sv = getLocalStartViewIfDebug()
-    const start: StartView = sv ?? {
-      lon: Number.isFinite(env.cameraStartLon) ? env.cameraStartLon : camLonDeg,
-      lat: Number.isFinite(env.cameraStartLat) ? env.cameraStartLat : camLatDeg,
-      height: Number.isFinite(env.cameraStartHeight) ? env.cameraStartHeight : 180,
-      heading: Number.isFinite(env.cameraStartHeadingDeg) ? env.cameraStartHeadingDeg : 25,
-      pitch: Number.isFinite(env.cameraStartPitchDeg) ? env.cameraStartPitchDeg : -25,
-      roll: Number.isFinite(env.cameraStartRollDeg) ? env.cameraStartRollDeg : 0,
-    }
-    await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(start.lon, start.lat, start.height),
-      orientation: {
-        heading: CesiumMath.toRadians(start.heading),
-        pitch: CesiumMath.toRadians(start.pitch),
-        roll: CesiumMath.toRadians(start.roll),
-      },
-      duration: 0.9,
-    })
-  }
-
-  const flyToCity = async () => {
-    // Promenade du Peyrou preset.
-    // If VITE_CAMERA_CITY_* is not set, use these built-in Peyrou defaults (NOT the start view).
-    const PEYROU = {
-      lon: 3.8716984385445214,
-      lat: 43.61151107130465,
-      height: 140.9540352778667,
-      headingDeg: 253.385478733541,
-      pitchDeg: -8.555908095160738,
-      rollDeg: 0.00048627181085250166,
-    }
-    let lon = Number.isFinite(env.cameraCityLon) ? env.cameraCityLon : PEYROU.lon
-    let lat = Number.isFinite(env.cameraCityLat) ? env.cameraCityLat : PEYROU.lat
-    const height = Number.isFinite(env.cameraCityHeight) ? env.cameraCityHeight : PEYROU.height
-    const heading = Number.isFinite(env.cameraCityHeadingDeg) ? env.cameraCityHeadingDeg : PEYROU.headingDeg
-    const pitch = Number.isFinite(env.cameraCityPitchDeg) ? env.cameraCityPitchDeg : PEYROU.pitchDeg
-    const roll = Number.isFinite(env.cameraCityRollDeg) ? env.cameraCityRollDeg : PEYROU.rollDeg
-    // Safety: if city coords end up invalid/outside Montpellier, fall back to camera focus.
-    const inMontpellierCam = (la: number, lo: number) => la >= 43 && la <= 44 && lo >= 3 && lo <= 4
-    if (!inMontpellierCam(lat, lon) && inMontpellierCam(lon, lat)) {
-      // swapped
-      ;[lat, lon] = [lon, lat]
-    }
-    if (!inMontpellierCam(lat, lon)) {
-      // fallback to focus
-      lon = camLonDeg
-      lat = camLatDeg
-    }
-
-    await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(lon, lat, height),
-      orientation: { heading: CesiumMath.toRadians(heading), pitch: CesiumMath.toRadians(pitch), roll: CesiumMath.toRadians(roll) },
-      duration: 1.2,
-    })
-  }
-
-  // Keep the old behavior as a "refocus the camera on the tree model" helper.
-  const flyToTreeFocus = async () => {
-    // Prefer flying to the actual main tree model position (after layout + live edits),
-    // so camera always ends up near the tree even if env camera coords are wrong.
-    try {
-      if (treeModel) {
-        const p = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
-        const carto = Cartographic.fromCartesian(p)
-        if (Number.isFinite(carto.longitude) && Number.isFinite(carto.latitude)) {
-          const lon = CesiumMath.toDegrees(carto.longitude)
-          const lat = CesiumMath.toDegrees(carto.latitude)
-          await viewer.camera.flyTo({
-            destination: Cartesian3.fromDegrees(lon, lat, 120),
-            orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
-            duration: 1.0,
-          })
-          return
-        }
-      }
-    } catch {
-      // fallback below
-    }
-    await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(camLonDeg, camLatDeg, 120),
-      orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
-      duration: 1.0,
-    })
-  }
-  ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
-  // Requested: Tree button should match the start camera view.
-  ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToStart()
-  void flyToStart()
+  void initExtraTreesSubsystem()
 
   // Local ornament placement
   async function placeLocalOrnament(anchorIndex: number, ornamentId: OrnamentId) {
@@ -2920,7 +2951,7 @@ async function init() {
   // Hide loading overlay once the app reached interactive state (tree loaded or failed).
   // We keep it simple: after first successful fly-to + next frame.
   // (Photorealistic tiles streaming continues in background.)
-  setTimeout(() => setLoading(false), 1200)
+  dismissInitialLoadingOverlay()
 
   // Optional: click tree to refocus
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
