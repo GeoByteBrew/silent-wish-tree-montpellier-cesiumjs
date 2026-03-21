@@ -3,10 +3,12 @@ import {
   Cartesian3,
   Cartographic,
   Cesium3DTileset,
+  ClassificationType,
   Color,
   ConstantProperty,
   ConstantPositionProperty,
   HeadingPitchRoll,
+  HeightReference,
   Ion,
   IonImageryProvider,
   IonResource,
@@ -16,6 +18,7 @@ import {
   NearFarScalar,
   BillboardCollection,
   Model,
+  PolygonHierarchy,
   Quaternion,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -539,6 +542,67 @@ function summarizePointNotes(pts: Array<{ lon: number; lat: number; note?: strin
   }
   const parts = Array.from(counts.entries()).map(([k, v]) => `${k}:${v}`)
   return parts.join(', ')
+}
+
+const POOL_GEOJSON_URL = '/pool/pool_peyrau.geojson'
+
+/** First Polygon exterior ring as flat [lon, lat, ...] for Cartesian3.fromDegreesArray */
+function extractFirstPolygonExteriorLonLat(geo: any): number[] | null {
+  const rings: any[][] = []
+  const collect = (geom: any) => {
+    if (!geom) return
+    if (geom.type === 'Polygon' && Array.isArray(geom.coordinates?.[0])) {
+      rings.push(geom.coordinates[0])
+    } else if (geom.type === 'MultiPolygon') {
+      for (const poly of geom.coordinates ?? []) {
+        if (Array.isArray(poly?.[0])) rings.push(poly[0])
+      }
+    }
+  }
+  if (geo?.type === 'FeatureCollection') {
+    for (const f of geo.features ?? []) collect(f?.geometry)
+  } else if (geo?.type === 'Feature') {
+    collect(geo.geometry)
+  } else {
+    collect(geo)
+  }
+  const ring = rings[0]
+  if (!ring?.length) return null
+  const flat: number[] = []
+  for (const c of ring) {
+    if (Array.isArray(c) && c.length >= 2) {
+      const lon = Number(c[0])
+      const lat = Number(c[1])
+      if (Number.isFinite(lon) && Number.isFinite(lat)) flat.push(lon, lat)
+    }
+  }
+  return flat.length >= 6 ? flat : null
+}
+
+/** Semi-transparent “water” polygon over Peyrou pool (GeoJSON in public/pool/). */
+async function addPeyrouPoolEntity(viewer: Viewer, has3DTiles: boolean): Promise<void> {
+  try {
+    const res = await fetch(POOL_GEOJSON_URL, { cache: 'force-cache' })
+    if (!res.ok) return
+    const geo = await res.json()
+    const flat = extractFirstPolygonExteriorLonLat(geo)
+    if (!flat) return
+    const positions = Cartesian3.fromDegreesArray(flat)
+    viewer.entities.add({
+      id: 'peyrouPoolWater',
+      polygon: {
+        hierarchy: new PolygonHierarchy(positions),
+        material: Color.fromCssColorString('#1a7a9c').withAlpha(0.55),
+        outline: true,
+        outlineColor: Color.fromCssColorString('#0a3d52').withAlpha(0.45),
+        outlineWidth: 1.5,
+        heightReference: HeightReference.CLAMP_TO_GROUND,
+        classificationType: has3DTiles ? ClassificationType.CESIUM_3D_TILE : ClassificationType.TERRAIN,
+      },
+    })
+  } catch {
+    // optional overlay
+  }
 }
 
 function getNumberParam(name: string): number | null {
@@ -1403,6 +1467,8 @@ async function init() {
       )
     }
   }
+
+  void addPeyrouPoolEntity(viewer, has3DTiles)
 
   // Helper: sample "ground" height from rendered photorealistic 3D tiles.
   // In cities you can have stacked surfaces (roof/terrace/ground). We sample a small grid and take the MIN height
