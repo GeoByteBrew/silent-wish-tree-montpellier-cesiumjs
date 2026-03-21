@@ -2351,31 +2351,6 @@ async function init() {
     })
   }
 
-  const flyToTreeFocus = async () => {
-    try {
-      if (treeModel) {
-        const p = Matrix4.getTranslation(treeModel.modelMatrix, new Cartesian3())
-        const carto = Cartographic.fromCartesian(p)
-        if (Number.isFinite(carto.longitude) && Number.isFinite(carto.latitude)) {
-          const lon = CesiumMath.toDegrees(carto.longitude)
-          const lat = CesiumMath.toDegrees(carto.latitude)
-          await viewer.camera.flyTo({
-            destination: Cartesian3.fromDegrees(lon, lat, 120),
-            orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
-            duration: 1.0,
-          })
-          return
-        }
-      }
-    } catch {
-      // fallback below
-    }
-    await viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(camLonDeg, camLatDeg, 120),
-      orientation: { heading: CesiumMath.toRadians(25), pitch: CesiumMath.toRadians(-25), roll: 0 },
-      duration: 1.0,
-    })
-  }
   ;($('#camCityBtn') as HTMLButtonElement).onclick = () => void flyToCity()
   ;($('#camTreeBtn') as HTMLButtonElement).onclick = () => void flyToStart()
   void flyToStart()
@@ -2955,7 +2930,8 @@ async function init() {
 
   // Optional: click tree to refocus
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
-  handler.setInputAction(() => void flyToTreeFocus(), ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
+  // Same camera as the Tree / Arbre button.
+  handler.setInputAction(() => void flyToStart(), ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
 
   // Postcard download (no wish required): use FR/EN transparent PNG frame.
   postcardBtn.onclick = async () => {
