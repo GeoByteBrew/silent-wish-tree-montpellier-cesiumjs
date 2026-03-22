@@ -1,10 +1,12 @@
 import './style.css'
 import {
+  CallbackProperty,
   Cartesian3,
   Cartographic,
   Cesium3DTileset,
   ClassificationType,
   Color,
+  ColorMaterialProperty,
   ConstantProperty,
   ConstantPositionProperty,
   HeadingPitchRoll,
@@ -12,6 +14,7 @@ import {
   Ion,
   IonImageryProvider,
   IonResource,
+  JulianDate,
   Math as CesiumMath,
   Matrix3,
   Matrix4,
@@ -579,7 +582,7 @@ function extractFirstPolygonExteriorLonLat(geo: any): number[] | null {
   return flat.length >= 6 ? flat : null
 }
 
-/** Semi-transparent “water” polygon over Peyrou pool (GeoJSON in public/pool/). */
+/** Semi-transparent “water” polygon + subtle time-based shimmer (alpha / hue) — not true reflection. */
 async function addPeyrouPoolEntity(viewer: Viewer, has3DTiles: boolean): Promise<void> {
   try {
     const res = await fetch(POOL_GEOJSON_URL, { cache: 'force-cache' })
@@ -588,13 +591,35 @@ async function addPeyrouPoolEntity(viewer: Viewer, has3DTiles: boolean): Promise
     const flat = extractFirstPolygonExteriorLonLat(geo)
     if (!flat) return
     const positions = Cartesian3.fromDegreesArray(flat)
+
+    const poolWaveT0 = JulianDate.now()
+    // Base teal #1a7a9c (sRGB 0–1): gentle slow + faster ripples on alpha and RGB.
+    const poolWaterMaterial = new ColorMaterialProperty(
+      new CallbackProperty((time) => {
+        const t = JulianDate.secondsDifference(time ?? JulianDate.now(), poolWaveT0)
+        const slow = 0.5 + 0.5 * Math.sin(t * 0.55)
+        const ripple = 0.5 + 0.5 * Math.sin(t * 1.75 + 0.9)
+        const alpha = CesiumMath.clamp(0.44 + 0.1 * slow + 0.07 * ripple, 0.38, 0.68)
+        const r = CesiumMath.clamp(0.102 + 0.022 * Math.sin(t * 1.05), 0.08, 0.14)
+        const g = CesiumMath.clamp(0.478 + 0.032 * Math.sin(t * 0.88 + 0.6), 0.42, 0.55)
+        const b = CesiumMath.clamp(0.612 + 0.028 * Math.sin(t * 1.2 + 1.4), 0.55, 0.68)
+        return new Color(r, g, b, alpha)
+      }, false),
+    )
+
+    const poolOutlineColor = new CallbackProperty((time) => {
+      const t = JulianDate.secondsDifference(time ?? JulianDate.now(), poolWaveT0)
+      const w = 0.5 + 0.5 * Math.sin(t * 0.9)
+      return Color.fromCssColorString('#0a3d52').withAlpha(CesiumMath.clamp(0.38 + 0.12 * w, 0.3, 0.55))
+    }, false)
+
     viewer.entities.add({
       id: 'peyrouPoolWater',
       polygon: {
         hierarchy: new PolygonHierarchy(positions),
-        material: Color.fromCssColorString('#1a7a9c').withAlpha(0.55),
+        material: poolWaterMaterial,
         outline: true,
-        outlineColor: Color.fromCssColorString('#0a3d52').withAlpha(0.45),
+        outlineColor: poolOutlineColor,
         outlineWidth: 1.5,
         heightReference: HeightReference.CLAMP_TO_GROUND,
         classificationType: has3DTiles ? ClassificationType.CESIUM_3D_TILE : ClassificationType.TERRAIN,
