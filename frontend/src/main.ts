@@ -544,7 +544,7 @@ function summarizePointNotes(pts: Array<{ lon: number; lat: number; note?: strin
   return parts.join(', ')
 }
 
-const POOL_GEOJSON_URL = '/pool/pool_peyrau_iv.geojson'
+const POOL_GEOJSON_URL = '/pool/pool_peyrau_v.geojson'
 
 /** First Polygon exterior ring as flat [lon, lat, ...] for Cartesian3.fromDegreesArray */
 function extractFirstPolygonExteriorLonLat(geo: any): number[] | null {
