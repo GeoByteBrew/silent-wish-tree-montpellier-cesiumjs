@@ -593,7 +593,7 @@ async function addPeyrouPoolEntity(viewer: Viewer, has3DTiles: boolean): Promise
     const positions = Cartesian3.fromDegreesArray(flat)
 
     const poolWaveT0 = JulianDate.now()
-    // Fixed teal (#1a7a9c) — only alpha varies so the whole pool doesn’t “shift hue” at once (more natural).
+    // Teal base + alpha ripples; tiny lerp toward white = mild specular “glint” (not real reflection).
     const poolBaseR = 26 / 255
     const poolBaseG = 122 / 255
     const poolBaseB = 156 / 255
@@ -603,7 +603,13 @@ async function addPeyrouPoolEntity(viewer: Viewer, has3DTiles: boolean): Promise
         const slow = 0.5 + 0.5 * Math.sin(t * 0.62)
         const ripple = 0.5 + 0.5 * Math.sin(t * 1.35 + 0.7)
         const alpha = CesiumMath.clamp(0.5 + 0.1 * slow + 0.07 * ripple, 0.42, 0.66)
-        return new Color(poolBaseR, poolBaseG, poolBaseB, alpha)
+        const specSlow = 0.5 + 0.5 * Math.sin(t * 1.05 + 0.2)
+        const specSharp = 0.5 + 0.5 * Math.sin(t * 2.35 + 1.05)
+        const glint = CesiumMath.clamp(0.032 * specSlow + 0.028 * specSharp * specSharp, 0, 0.09)
+        const r = poolBaseR + (1 - poolBaseR) * glint
+        const g = poolBaseG + (1 - poolBaseG) * glint
+        const b = poolBaseB + (1 - poolBaseB) * glint
+        return new Color(r, g, b, alpha)
       }, false),
     )
 
