@@ -582,7 +582,7 @@ function extractFirstPolygonExteriorLonLat(geo: any): number[] | null {
   return flat.length >= 6 ? flat : null
 }
 
-/** Semi-transparent “water” polygon + subtle time-based shimmer (alpha / hue) — not true reflection. */
+/** Semi-transparent “water” polygon: hue fixed (teal), gentle alpha-only motion — avoids whole-surface color strobing. */
 async function addPeyrouPoolEntity(viewer: Viewer, has3DTiles: boolean): Promise<void> {
   try {
     const res = await fetch(POOL_GEOJSON_URL, { cache: 'force-cache' })
@@ -593,24 +593,24 @@ async function addPeyrouPoolEntity(viewer: Viewer, has3DTiles: boolean): Promise
     const positions = Cartesian3.fromDegreesArray(flat)
 
     const poolWaveT0 = JulianDate.now()
-    // Base teal #1a7a9c: stronger alpha + RGB motion so the “water” reads clearly on 3D Tiles.
+    // Fixed teal (#1a7a9c) — only alpha varies so the whole pool doesn’t “shift hue” at once (more natural).
+    const poolBaseR = 26 / 255
+    const poolBaseG = 122 / 255
+    const poolBaseB = 156 / 255
     const poolWaterMaterial = new ColorMaterialProperty(
       new CallbackProperty((time) => {
         const t = JulianDate.secondsDifference(time ?? JulianDate.now(), poolWaveT0)
-        const slow = 0.5 + 0.5 * Math.sin(t * 1.15)
-        const ripple = 0.5 + 0.5 * Math.sin(t * 2.85 + 0.9)
-        const alpha = CesiumMath.clamp(0.42 + 0.2 * slow + 0.14 * ripple, 0.32, 0.84)
-        const r = CesiumMath.clamp(0.102 + 0.055 * Math.sin(t * 1.25), 0.05, 0.2)
-        const g = CesiumMath.clamp(0.478 + 0.085 * Math.sin(t * 1.05 + 0.6), 0.35, 0.62)
-        const b = CesiumMath.clamp(0.612 + 0.08 * Math.sin(t * 1.45 + 1.4), 0.48, 0.78)
-        return new Color(r, g, b, alpha)
+        const slow = 0.5 + 0.5 * Math.sin(t * 0.62)
+        const ripple = 0.5 + 0.5 * Math.sin(t * 1.35 + 0.7)
+        const alpha = CesiumMath.clamp(0.5 + 0.1 * slow + 0.07 * ripple, 0.42, 0.66)
+        return new Color(poolBaseR, poolBaseG, poolBaseB, alpha)
       }, false),
     )
 
     const poolOutlineColor = new CallbackProperty((time) => {
       const t = JulianDate.secondsDifference(time ?? JulianDate.now(), poolWaveT0)
-      const w = 0.5 + 0.5 * Math.sin(t * 1.35)
-      return Color.fromCssColorString('#0a3d52').withAlpha(CesiumMath.clamp(0.34 + 0.22 * w, 0.22, 0.72))
+      const w = 0.5 + 0.5 * Math.sin(t * 0.75)
+      return Color.fromCssColorString('#0a3d52').withAlpha(CesiumMath.clamp(0.4 + 0.1 * w, 0.32, 0.52))
     }, false)
 
     viewer.entities.add({
