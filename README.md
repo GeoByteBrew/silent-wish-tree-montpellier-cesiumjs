@@ -60,7 +60,7 @@ For pre-deploy testing you can temporarily set `DEMO_KEY` and put the same value
    - Ornaments: `frontend/public/models/ornaments/*.glb`
    - Extra trees (local-first): `frontend/public/models/pyr_tree_big_green.glb`
    - Extra trees points (local-first): `frontend/public/trees/trees_peyrau84.geojson`
-   - Peyrou pool overlay (optional polygon → semi-transparent “water”): `frontend/public/pool/pool_peyrau_ii.geojson`
+   - Peyrou pool overlay (optional polygon → semi-transparent “water”): `frontend/public/pool/pool_peyrau_iii.geojson`
 
 Run locally:
 
