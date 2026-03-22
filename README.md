@@ -88,6 +88,7 @@ Supabase Edge Functions stay hosted on Supabase.
 
 - The loading overlay hides as soon as the main scene can render (after the start camera fly-to + 2 frames). **Extra trees** load in the background; their ground heights are sampled in **batches** (not one huge `sampleHeightMostDetailed` call) so the tab stays responsive with photorealistic 3D Tiles.
 - To reduce work further, lower `VITE_EXTRA_TREES_LIMIT` (e.g. 40 instead of 80).
+- Photorealistic 3D Tiles: the app uses a **higher initial screen-space error**, **skipLevelOfDetail**, **dynamicScreenSpaceError**, a **capped wait** on `readyPromise`, and slightly raised **RequestScheduler** limits so the city mesh appears sooner (tiles keep refining in the background).
 
 ## Notes on “anonymity”
 

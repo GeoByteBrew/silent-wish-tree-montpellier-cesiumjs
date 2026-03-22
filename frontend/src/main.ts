@@ -23,6 +23,7 @@ import {
   Model,
   PolygonHierarchy,
   Quaternion,
+  RequestScheduler,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   Transforms,
@@ -1466,12 +1467,40 @@ async function init() {
 
   if (has3DTiles) {
     try {
-      const tileset = await Cesium3DTileset.fromIonAssetId(env.photorealisticAssetId)
+      // Slightly higher concurrency for ion / tile hosts (HTTP/2 friendly); helps first paint.
+      try {
+        RequestScheduler.maximumRequestsPerServer = Math.max(RequestScheduler.maximumRequestsPerServer, 12)
+        RequestScheduler.maximumRequests = Math.max(RequestScheduler.maximumRequests, 64)
+      } catch {
+        // ignore
+      }
+
+      const tileset = await Cesium3DTileset.fromIonAssetId(env.photorealisticAssetId, {
+        // Default SSE is 16 — coarser first = faster initial mesh; refines as camera settles.
+        maximumScreenSpaceError: 28,
+        skipLevelOfDetail: true,
+        baseScreenSpaceError: 1024,
+        skipScreenSpaceErrorFactor: 16,
+        skipLevels: 1,
+        immediatelyLoadDesiredLevelOfDetail: false,
+        loadSiblings: false,
+        // Softer LOD while moving (often feels snappier for city-scale photorealistic tiles).
+        dynamicScreenSpaceError: true,
+        dynamicScreenSpaceErrorDensity: 2.5e-4,
+        dynamicScreenSpaceErrorFactor: 24,
+        dynamicScreenSpaceErrorHeightFalloff: 0.3,
+      })
       viewer.scene.primitives.add(tileset)
       try {
         setLoading(true, 'Loading photorealistic Montpellier…')
         const rp = (tileset as any)?.readyPromise
-        if (rp && typeof rp.then === 'function') await rp
+        if (rp && typeof rp.then === 'function') {
+          // Don’t block the whole init on “fully ready”; tiles keep streaming in background.
+          await Promise.race([
+            rp.catch(() => undefined),
+            new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+          ])
+        }
       } catch {
         // ignore; we'll still proceed
       }
