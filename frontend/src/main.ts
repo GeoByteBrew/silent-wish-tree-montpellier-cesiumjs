@@ -1347,12 +1347,15 @@ async function init() {
         scratchClampedEnu.z = h
       }
 
-      // Camera height clamp:
-      // With photorealistic 3D Tiles, globe.getHeight() is not a reliable “ground” (it can be null/0),
-      // which can trap the camera “underground” inside tiles. Instead, clamp in the tree-local ENU frame:
-      // - min: 1m above the ENU origin (tree center)
-      // - max: 50m above the ENU origin
+      // Camera height clamp (tree-local ENU “Up” = scratchClampedEnu.z):
+      // Do NOT use globe.getHeight() with photorealistic tiles — it can stick the camera underground.
+      // Min Z keeps the camera from diving below the tree reference; max Z caps altitude.
+      const MIN_Z = 1.5
       const MAX_Z = 60
+      if (scratchClampedEnu.z < MIN_Z) {
+        scratchClampedEnu.z = MIN_Z
+        changed = true
+      }
       if (scratchClampedEnu.z > MAX_Z) {
         scratchClampedEnu.z = MAX_Z
         changed = true
