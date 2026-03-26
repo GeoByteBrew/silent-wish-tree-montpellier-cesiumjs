@@ -1808,6 +1808,12 @@ async function init() {
   controller.enableTilt = true
   controller.enableZoom = true
   controller.enableTranslate = true
+  // Smoother mouse feel: reduce abrupt jumps and add gentler inertia.
+  controller.maximumMovementRatio = 0.08
+  controller.inertiaSpin = 0.92
+  controller.inertiaTranslate = 0.9
+  controller.inertiaZoom = 0.82
+  controller.zoomFactor = 2.5
 
   // Tree height:
   // - If photorealistic 3D tiles are enabled, compute the ground height at (lon,lat) and add a small offset.
