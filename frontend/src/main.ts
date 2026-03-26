@@ -1352,7 +1352,7 @@ async function init() {
       // Do NOT use globe.getHeight() with photorealistic tiles — it can stick the camera underground.
       // Min Z keeps the camera from diving below the tree reference; max Z caps altitude.
       const MIN_Z = 1.5
-      const MAX_Z = 115
+      const MAX_Z = 145
       if (scratchClampedEnu.z < MIN_Z) {
         scratchClampedEnu.z = MIN_Z
         changed = true
