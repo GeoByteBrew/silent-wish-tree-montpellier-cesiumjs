@@ -1298,8 +1298,7 @@ async function init() {
     contextOptions: { preserveDrawingBuffer: true } as any,
   })
 
-  // Camera roam limit: keep the camera near the main tree with a soft edge.
-  const CAMERA_LIMIT_RADIUS_M = 420
+  // Camera: only clamp minimum height in tree-local ENU (no horizontal / max-altitude limits).
   const scratchCenter = new Cartesian3()
   const scratchEnu = new Matrix4()
   const scratchInvEnu = new Matrix4()
@@ -1329,36 +1328,15 @@ async function init() {
       const d = Math.hypot(e, n)
       if (!Number.isFinite(d)) return
 
-      // Apply BOTH constraints every frame:
-      // - horizontal roam limit with soft resistance near the edge
-      // - height limit in tree-local ENU (robust with 3D Tiles)
+      // Minimum height only (tree-local ENU “Up” = scratchClampedEnu.z).
+      // Do NOT use globe.getHeight() with photorealistic tiles — it can stick the camera underground.
       let changed = false
-      // Start gently pushing back after this radius, instead of a hard snap at the limit.
-      const SOFT_ZONE_START_M = CAMERA_LIMIT_RADIUS_M * 0.82
       scratchClampedEnu.x = e
       scratchClampedEnu.y = n
       scratchClampedEnu.z = h
-      if (d > SOFT_ZONE_START_M) {
-        const zone = Math.max(1e-3, CAMERA_LIMIT_RADIUS_M - SOFT_ZONE_START_M)
-        // Exponential easing: smooth resistance in the soft zone, asymptotically approaching the hard radius.
-        const targetD = SOFT_ZONE_START_M + zone * (1 - Math.exp(-(d - SOFT_ZONE_START_M) / zone))
-        const k = targetD / d
-        scratchClampedEnu.x = e * k
-        scratchClampedEnu.y = n * k
-        changed = true
-      }
-
-      // Camera height clamp (tree-local ENU “Up” = scratchClampedEnu.z):
-      // Do NOT use globe.getHeight() with photorealistic tiles — it can stick the camera underground.
-      // Min Z keeps the camera from diving below the tree reference; max Z caps altitude.
       const MIN_Z = 1.5
-      const MAX_Z = 145
       if (scratchClampedEnu.z < MIN_Z) {
         scratchClampedEnu.z = MIN_Z
-        changed = true
-      }
-      if (scratchClampedEnu.z > MAX_Z) {
-        scratchClampedEnu.z = MAX_Z
         changed = true
       }
 
