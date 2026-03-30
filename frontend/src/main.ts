@@ -1330,13 +1330,16 @@ async function init() {
 
       // Minimum height only (tree-local ENU “Up” = scratchClampedEnu.z).
       // Do NOT use globe.getHeight() with photorealistic tiles — it can stick the camera underground.
+      // Ease toward the floor instead of a one-frame snap (reduces jarring motion).
       let changed = false
       scratchClampedEnu.x = e
       scratchClampedEnu.y = n
       scratchClampedEnu.z = h
       const MIN_Z = 1.5
+      const FLOOR_LERP = 0.22
       if (scratchClampedEnu.z < MIN_Z) {
-        scratchClampedEnu.z = MIN_Z
+        const nz = h + (MIN_Z - h) * FLOOR_LERP
+        scratchClampedEnu.z = nz >= MIN_Z - 0.02 ? MIN_Z : nz
         changed = true
       }
 
