@@ -138,6 +138,83 @@ const env = {
   cameraCityRollDeg: envNum('VITE_CAMERA_CITY_ROLL_DEG'),
 }
 
+type PerfProfile = 'low' | 'balanced' | 'high'
+type PerfTuning = {
+  resolutionScale: number
+  maximumMovementRatio: number
+  inertiaSpin: number
+  inertiaTranslate: number
+  inertiaZoom: number
+  zoomFactor: number
+  maximumScreenSpaceError: number
+  dynamicScreenSpaceErrorFactor: number
+}
+
+function parsePerfProfile(v: string | null): PerfProfile | null {
+  const s = (v ?? '').trim().toLowerCase()
+  if (s === 'low' || s === 'balanced' || s === 'high') return s
+  return null
+}
+
+function detectInitialPerfProfile(): PerfProfile {
+  const nav = navigator as Navigator & { deviceMemory?: number }
+  const cores = typeof nav.hardwareConcurrency === 'number' ? nav.hardwareConcurrency : 4
+  const mem = typeof nav.deviceMemory === 'number' ? nav.deviceMemory : 4
+  const dpr = typeof window.devicePixelRatio === 'number' ? window.devicePixelRatio : 1
+  if (cores <= 4 || mem <= 4 || dpr >= 2.5) return 'low'
+  if (cores >= 10 && mem >= 8 && dpr <= 2) return 'high'
+  return 'balanced'
+}
+
+function tuningForProfile(profile: PerfProfile): PerfTuning {
+  if (profile === 'low') {
+    return {
+      resolutionScale: 0.8,
+      maximumMovementRatio: 0.055,
+      inertiaSpin: 0.95,
+      inertiaTranslate: 0.93,
+      inertiaZoom: 0.88,
+      zoomFactor: 2.0,
+      maximumScreenSpaceError: 44,
+      dynamicScreenSpaceErrorFactor: 34,
+    }
+  }
+  if (profile === 'high') {
+    return {
+      resolutionScale: 1.0,
+      maximumMovementRatio: 0.095,
+      inertiaSpin: 0.9,
+      inertiaTranslate: 0.88,
+      inertiaZoom: 0.8,
+      zoomFactor: 2.8,
+      maximumScreenSpaceError: 22,
+      dynamicScreenSpaceErrorFactor: 20,
+    }
+  }
+  return {
+    resolutionScale: 0.9,
+    maximumMovementRatio: 0.08,
+    inertiaSpin: 0.92,
+    inertiaTranslate: 0.9,
+    inertiaZoom: 0.82,
+    zoomFactor: 2.5,
+    maximumScreenSpaceError: 28,
+    dynamicScreenSpaceErrorFactor: 24,
+  }
+}
+
+function lowerProfile(p: PerfProfile): PerfProfile {
+  if (p === 'high') return 'balanced'
+  if (p === 'balanced') return 'low'
+  return 'low'
+}
+
+function higherProfile(p: PerfProfile): PerfProfile {
+  if (p === 'low') return 'balanced'
+  if (p === 'balanced') return 'high'
+  return 'high'
+}
+
 const ORNAMENTS = [
   { id: 'star', file: 'star', label: { fr: 'Étoile', en: 'Star' } },
   { id: 'red_ball', file: 'red_ball', label: { fr: 'Boule rouge', en: 'Red ball' } },
@@ -1298,6 +1375,21 @@ async function init() {
     contextOptions: { preserveDrawingBuffer: true } as any,
   })
 
+  const perfOverride = parsePerfProfile(getStringParam('perf'))
+  let perfProfile: PerfProfile = perfOverride ?? detectInitialPerfProfile()
+  let perfTuning = tuningForProfile(perfProfile)
+  let photorealisticTileset: Cesium3DTileset | null = null
+  viewer.resolutionScale = perfTuning.resolutionScale
+
+  const applyScenePerfTuning = () => {
+    perfTuning = tuningForProfile(perfProfile)
+    viewer.resolutionScale = perfTuning.resolutionScale
+    if (photorealisticTileset) {
+      photorealisticTileset.maximumScreenSpaceError = perfTuning.maximumScreenSpaceError
+      ;(photorealisticTileset as any).dynamicScreenSpaceErrorFactor = perfTuning.dynamicScreenSpaceErrorFactor
+    }
+  }
+
   // Camera: only clamp minimum height in tree-local ENU (no horizontal / max-altitude limits).
   const scratchCenter = new Cartesian3()
   const scratchEnu = new Matrix4()
@@ -1462,7 +1554,7 @@ async function init() {
 
       const tileset = await Cesium3DTileset.fromIonAssetId(env.photorealisticAssetId, {
         // Default SSE is 16 — coarser first = faster initial mesh; refines as camera settles.
-        maximumScreenSpaceError: 28,
+        maximumScreenSpaceError: perfTuning.maximumScreenSpaceError,
         skipLevelOfDetail: true,
         baseScreenSpaceError: 1024,
         skipScreenSpaceErrorFactor: 16,
@@ -1472,9 +1564,10 @@ async function init() {
         // Softer LOD while moving (often feels snappier for city-scale photorealistic tiles).
         dynamicScreenSpaceError: true,
         dynamicScreenSpaceErrorDensity: 2.5e-4,
-        dynamicScreenSpaceErrorFactor: 24,
+        dynamicScreenSpaceErrorFactor: perfTuning.dynamicScreenSpaceErrorFactor,
         dynamicScreenSpaceErrorHeightFalloff: 0.3,
       })
+      photorealisticTileset = tileset
       viewer.scene.primitives.add(tileset)
       try {
         setLoading(true, 'Loading photorealistic Montpellier…')
@@ -1789,12 +1882,44 @@ async function init() {
   controller.enableTilt = true
   controller.enableZoom = true
   controller.enableTranslate = true
-  // Smoother mouse feel: reduce abrupt jumps and add gentler inertia.
-  controller.maximumMovementRatio = 0.08
-  controller.inertiaSpin = 0.92
-  controller.inertiaTranslate = 0.9
-  controller.inertiaZoom = 0.82
-  controller.zoomFactor = 2.5
+  // Adaptive camera feel by profile (slow devices get gentler movement).
+  const applyControllerPerfTuning = () => {
+    controller.maximumMovementRatio = perfTuning.maximumMovementRatio
+    controller.inertiaSpin = perfTuning.inertiaSpin
+    controller.inertiaTranslate = perfTuning.inertiaTranslate
+    controller.inertiaZoom = perfTuning.inertiaZoom
+    controller.zoomFactor = perfTuning.zoomFactor
+  }
+  applyControllerPerfTuning()
+
+  // Runtime auto-tune: lower quality on sustained low FPS, raise it back when stable.
+  if (has3DTiles && !perfOverride) {
+    let lastTs = performance.now()
+    let emaFps = 60
+    let warmupFrames = 0
+    let lastAdjustTs = lastTs
+    viewer.scene.postRender.addEventListener(() => {
+      const now = performance.now()
+      const dt = now - lastTs
+      lastTs = now
+      if (dt <= 0 || dt > 250) return
+      const fps = 1000 / dt
+      emaFps = emaFps * 0.9 + fps * 0.1
+      warmupFrames++
+      if (warmupFrames < 120) return
+      if (now - lastAdjustTs < 6000) return
+
+      let next: PerfProfile | null = null
+      if (emaFps < 22) next = lowerProfile(perfProfile)
+      else if (emaFps > 50) next = higherProfile(perfProfile)
+      if (!next || next === perfProfile) return
+
+      perfProfile = next
+      applyScenePerfTuning()
+      applyControllerPerfTuning()
+      lastAdjustTs = now
+    })
+  }
 
   // Tree height:
   // - If photorealistic 3D tiles are enabled, compute the ground height at (lon,lat) and add a small offset.
