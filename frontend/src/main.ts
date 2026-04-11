@@ -229,7 +229,7 @@ const ORNAMENTS = [
 ] as const
 
 /** World scale for ornament GLBs. Avoids minimumPixelSize so ornaments shrink with distance like the tree; tune if too small/large at typical viewing distance. */
-const ORNAMENT_MODEL_WORLD_SCALE = 2.5
+const ORNAMENT_MODEL_WORLD_SCALE = 1.6
 
 type OrnamentId = (typeof ORNAMENTS)[number]['id']
 const ORNAMENT_ID_SET = new Set<string>(ORNAMENTS.map((o) => o.id))
