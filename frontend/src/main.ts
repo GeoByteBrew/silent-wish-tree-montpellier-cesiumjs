@@ -231,12 +231,6 @@ const ORNAMENTS = [
 /** World scale for ornament GLBs. Avoids minimumPixelSize so ornaments shrink with distance like the tree; tune if too small/large at typical viewing distance. */
 const ORNAMENT_MODEL_WORLD_SCALE = 2.5
 
-/**
- * If set, hide ornament models + light halos when horizontal camera distance to the tree (m) exceeds this.
- * `null` = never hide — avoids pop/jank in the ~80–100m band (binary show/hide + perspective read as “sudden grow” then disappear).
- */
-const ORNAMENT_FAR_HIDE_BEYOND_M: number | null = null
-
 type OrnamentId = (typeof ORNAMENTS)[number]['id']
 const ORNAMENT_ID_SET = new Set<string>(ORNAMENTS.map((o) => o.id))
 function isOrnamentId(v: string): v is OrnamentId {
@@ -1449,9 +1443,9 @@ async function init() {
         viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
       }
 
-      // Optional visibility rule: past ORNAMENT_FAR_HIDE_BEYOND_M horizontal meters, hide ornaments + halos.
+      // Visibility rule: if camera is >90m horizontally from the tree, hide ornaments and light halos.
       // Use horizontal distance (d) so small height changes don't flicker.
-      const nextFar = ORNAMENT_FAR_HIDE_BEYOND_M != null && d > ORNAMENT_FAR_HIDE_BEYOND_M
+      const nextFar = d > 90
       if (nextFar !== farHide) {
         farHide = nextFar
         // Hide/show ornaments
@@ -2141,9 +2135,8 @@ async function init() {
     if (!lightAnchorNames.length) return
     clearTreeLights()
 
-    // Keep full point scale until farther out so the 80–120m camera band doesn’t stack with ornament visibility tuning.
-    const scaleByDistance = new NearFarScalar(150, 1.0, 900, 0.35)
-    const haloScaleByDistance = new NearFarScalar(150, 1.2, 900, 0.4)
+    const scaleByDistance = new NearFarScalar(80, 1.0, 900, 0.35)
+    const haloScaleByDistance = new NearFarScalar(80, 1.2, 900, 0.4)
 
     // Disable a couple of problematic anchors (requested).
     // Be tolerant of suffixes like "Light.44.001" and leading zeros.
