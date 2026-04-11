@@ -228,6 +228,9 @@ const ORNAMENTS = [
   { id: 'tree_petit', file: 'tree_petit', label: { fr: 'Petit sapin', en: 'Small tree' } },
 ] as const
 
+/** World scale for ornament GLBs. Avoids minimumPixelSize so ornaments shrink with distance like the tree; tune if too small/large at typical viewing distance. */
+const ORNAMENT_MODEL_WORLD_SCALE = 2.5
+
 type OrnamentId = (typeof ORNAMENTS)[number]['id']
 const ORNAMENT_ID_SET = new Set<string>(ORNAMENTS.map((o) => o.id))
 function isOrnamentId(v: string): v is OrnamentId {
@@ -2292,9 +2295,7 @@ async function init() {
       const model = await Model.fromGltfAsync({
         url,
         modelMatrix: worldMatrix,
-        scale: 0.35,
-        minimumPixelSize: 24,
-        maximumScale: 10,
+        scale: 0.35 * ORNAMENT_MODEL_WORLD_SCALE,
       })
       viewer.scene.primitives.add(model)
       const inst = { model, anchorMatrix: rel }
@@ -3029,10 +3030,7 @@ async function init() {
       const model = await Model.fromGltfAsync({
         url,
         modelMatrix: worldMatrix,
-        scale: 1.0,
-        // Keep ornaments visible even if they're small or the camera is far.
-        minimumPixelSize: 24,
-        maximumScale: 10,
+        scale: ORNAMENT_MODEL_WORLD_SCALE,
       })
       viewer.scene.primitives.add(model)
       // Store anchor matrix (if any) so ornaments stay attached when the tree is moved/rescaled later.
