@@ -1,0 +1,8 @@
+{
+"type": "FeatureCollection",
+"name": "tree_ch",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "id": 1 }, "geometry": { "type": "Point", "coordinates": [ 3.869533498531448, 43.61133973726708 ] } }
+]
+}
