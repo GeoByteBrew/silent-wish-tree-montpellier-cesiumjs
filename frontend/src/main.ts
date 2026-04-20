@@ -170,11 +170,11 @@ function tuningForProfile(profile: PerfProfile): PerfTuning {
   if (profile === 'low') {
     return {
       resolutionScale: 0.8,
-      maximumMovementRatio: 0.055,
-      inertiaSpin: 0.95,
-      inertiaTranslate: 0.93,
-      inertiaZoom: 0.88,
-      zoomFactor: 2.0,
+      maximumMovementRatio: 0.04,
+      inertiaSpin: 0.86,
+      inertiaTranslate: 0.84,
+      inertiaZoom: 0.78,
+      zoomFactor: 1.5,
       maximumScreenSpaceError: 44,
       dynamicScreenSpaceErrorFactor: 34,
     }
@@ -182,22 +182,22 @@ function tuningForProfile(profile: PerfProfile): PerfTuning {
   if (profile === 'high') {
     return {
       resolutionScale: 1.0,
-      maximumMovementRatio: 0.095,
-      inertiaSpin: 0.9,
-      inertiaTranslate: 0.88,
-      inertiaZoom: 0.8,
-      zoomFactor: 2.8,
+      maximumMovementRatio: 0.072,
+      inertiaSpin: 0.8,
+      inertiaTranslate: 0.78,
+      inertiaZoom: 0.7,
+      zoomFactor: 2.1,
       maximumScreenSpaceError: 22,
       dynamicScreenSpaceErrorFactor: 20,
     }
   }
   return {
     resolutionScale: 0.9,
-    maximumMovementRatio: 0.08,
-    inertiaSpin: 0.92,
-    inertiaTranslate: 0.9,
-    inertiaZoom: 0.82,
-    zoomFactor: 2.5,
+    maximumMovementRatio: 0.06,
+    inertiaSpin: 0.84,
+    inertiaTranslate: 0.82,
+    inertiaZoom: 0.74,
+    zoomFactor: 1.8,
     maximumScreenSpaceError: 28,
     dynamicScreenSpaceErrorFactor: 24,
   }
