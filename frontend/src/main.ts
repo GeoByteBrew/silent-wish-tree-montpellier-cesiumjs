@@ -2139,8 +2139,9 @@ async function init() {
     if (!lightAnchorNames.length) return
     clearTreeLights()
 
-    const scaleByDistance = new NearFarScalar(80, 1.0, 900, 0.35)
-    const haloScaleByDistance = new NearFarScalar(80, 1.2, 900, 0.4)
+    // City / zoomed-out views: keep shrinking past ~900m and end much smaller so bulbs don’t dominate the tree.
+    const scaleByDistance = new NearFarScalar(75, 1.0, 2600, 0.16)
+    const haloScaleByDistance = new NearFarScalar(60, 1.0, 2200, 0.09)
 
     // Disable a couple of problematic anchors (requested).
     // Be tolerant of suffixes like "Light.44.001" and leading zeros.
@@ -2184,7 +2185,7 @@ async function init() {
         id: haloId,
         position: pos,
         point: {
-          pixelSize: 16,
+          pixelSize: 13,
           color: new ConstantProperty(warmHalo),
           outlineWidth: 0,
           scaleByDistance: new ConstantProperty(haloScaleByDistance),
