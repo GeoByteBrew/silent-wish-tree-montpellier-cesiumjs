@@ -6,6 +6,7 @@ import {
   Cesium3DTileset,
   ClassificationType,
   Color,
+  ColorBlendMode,
   ColorMaterialProperty,
   ConstantProperty,
   ConstantPositionProperty,
@@ -1400,7 +1401,8 @@ async function init() {
   const scratchCamEnu = new Cartesian3()
   const scratchClampedEnu = new Cartesian3()
   const scratchClampedEcef = new Cartesian3()
-  let farHide = false
+  /** 1 = next to tree (full ornament/light visibility), 0 = camera far away (fade out). Updated every frame. */
+  let treeViewFade = 1
   viewer.scene.preUpdate.addEventListener(() => {
     try {
       // Avoid fighting camera flights
@@ -1443,25 +1445,27 @@ async function init() {
         viewer.camera.position = Cartesian3.clone(scratchClampedEcef, viewer.camera.position)
       }
 
-      // Visibility rule: if camera is >90m horizontally from the tree, hide ornaments and light halos.
-      // Use horizontal distance (d) so small height changes don't flicker.
-      const nextFar = d > 90
-      if (nextFar !== farHide) {
-        farHide = nextFar
-        // Hide/show ornaments
-        for (const o of localOrnaments) o.model.show = !farHide
-        // Hide/show light halos (keep cores visible)
-        for (const l of localLights) {
-          if (!l.id.includes(':halo:')) continue
-          const ent = viewer.entities.getById(l.id)
-          if (ent?.point) (ent.point as any).show = new ConstantProperty(!farHide)
+      // Soft distance fade: horizontal meters from tree (stable vs altitude jitter).
+      // Full visibility below FADE_START; smoothly gone by FADE_END (was a hard cut at 90m).
+      const FADE_START_M = 68
+      const FADE_END_M = 108
+      const u = CesiumMath.clamp((d - FADE_START_M) / (FADE_END_M - FADE_START_M), 0, 1)
+      treeViewFade = 1 - u * u * (3 - 2 * u)
+
+      for (const o of localOrnaments) {
+        const m = o.model
+        const f = treeViewFade
+        m.show = f > 0.02
+        if (m.show) {
+          m.color = new Color(1, 1, 1, f)
+          m.colorBlendMode = ColorBlendMode.HIGHLIGHT
         }
-        // Also hide debug anchor balls if they are attached
-        for (const ent of viewer.entities.values) {
-          const id = (ent as any)?.id
-          if (typeof id === 'string' && id.startsWith('dbg:') && ent.point) {
-            ;(ent.point as any).show = new ConstantProperty(!farHide)
-          }
+      }
+
+      for (const ent of viewer.entities.values) {
+        const id = (ent as any)?.id
+        if (typeof id === 'string' && id.startsWith('dbg:') && ent.point) {
+          ;(ent.point as any).show = new ConstantProperty(treeViewFade > 0.02)
         }
       }
     } catch {
@@ -2204,6 +2208,7 @@ async function init() {
         // Between 08:30 and 17:00 (Europe/Paris), dim lights by 50%.
         const mins = parisMinutesNow()
         const dim = mins >= 8 * 60 + 30 && mins < 17 * 60 ? 0.5 : 1.0
+        const vf = treeViewFade
         for (const l of localLights) {
           const ent = viewer.entities.getById(l.id)
           const g = ent?.point as any
@@ -2211,9 +2216,9 @@ async function init() {
           const meta = lightsPhases.get(l.id)
           if (!c || !meta || typeof c.setValue !== 'function') continue
           const s = 0.6 + 0.4 * Math.pow(0.5 + 0.5 * Math.sin(t * meta.speed + meta.phase), 2)
-          if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, (0.75 + 0.25 * s) * dim))
+          if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, (0.75 + 0.25 * s) * dim * vf))
           // Halo twinkle opacity reduced by 50% as well.
-          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, (0.06 + 0.11 * s) * dim))
+          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, (0.06 + 0.11 * s) * dim * vf))
         }
       })
     }
@@ -2297,6 +2302,8 @@ async function init() {
         modelMatrix: worldMatrix,
         scale: 0.35 * ORNAMENT_MODEL_WORLD_SCALE,
       })
+      model.color = Color.WHITE
+      model.colorBlendMode = ColorBlendMode.HIGHLIGHT
       viewer.scene.primitives.add(model)
       const inst = { model, anchorMatrix: rel }
       localOrnaments.push(inst)
@@ -3032,6 +3039,8 @@ async function init() {
         modelMatrix: worldMatrix,
         scale: ORNAMENT_MODEL_WORLD_SCALE,
       })
+      model.color = Color.WHITE
+      model.colorBlendMode = ColorBlendMode.HIGHLIGHT
       viewer.scene.primitives.add(model)
       // Store anchor matrix (if any) so ornaments stay attached when the tree is moved/rescaled later.
       if (anchorMatrix) localOrnaments.push({ model, anchorMatrix })
