@@ -216,16 +216,16 @@ function higherProfile(p: PerfProfile): PerfProfile {
 }
 
 const ORNAMENTS = [
-  { id: 'star', file: 'star', label: { fr: 'Étoile', en: 'Star' } },
-  { id: 'red_ball', file: 'red_ball', label: { fr: 'Boule rouge', en: 'Red ball' } },
-  { id: 'gold_ball', file: 'gold_ball', label: { fr: 'Boule dorée', en: 'Gold ball' } },
-  { id: 'silver_ball', file: 'silver_ball', label: { fr: 'Boule argentée', en: 'Silver ball' } },
-  { id: 'blue_ball', file: 'blue_ball', label: { fr: 'Boule bleue', en: 'Blue ball' } },
-  { id: 'red_silver_ball', file: 'red_silver_ball', label: { fr: 'Boule rouge/argent', en: 'Red/silver ball' } },
-  { id: 'blue_ball_snw', file: 'blue_ball_snw', label: { fr: 'Boule bleue (neige)', en: 'Blue ball (snow)' } },
-  { id: 'heart', file: 'heart', label: { fr: 'Cœur', en: 'Heart' } },
-  { id: 'snow', file: 'snow', label: { fr: 'Flocon', en: 'Snowflake' } },
-  { id: 'tree_petit', file: 'tree_petit', label: { fr: 'Petit sapin', en: 'Small tree' } },
+  { id: 'star', file: 'star2', label: { fr: 'Étoile', en: 'Star' } },
+  { id: 'red_ball', file: 'red_ball2', label: { fr: 'Boule rouge', en: 'Red ball' } },
+  { id: 'gold_ball', file: 'gold_ball2', label: { fr: 'Boule dorée', en: 'Gold ball' } },
+  { id: 'silver_ball', file: 'silver_ball2', label: { fr: 'Boule argentée', en: 'Silver ball' } },
+  { id: 'blue_ball', file: 'blue_ball2', label: { fr: 'Boule bleue', en: 'Blue ball' } },
+  { id: 'red_silver_ball', file: 'red_silver_ball2', label: { fr: 'Boule rouge/argent', en: 'Red/silver ball' } },
+  { id: 'blue_ball_snw', file: 'blue_ball_snw2', label: { fr: 'Boule bleue (neige)', en: 'Blue ball (snow)' } },
+  { id: 'heart', file: 'heart2', label: { fr: 'Cœur', en: 'Heart' } },
+  { id: 'snow', file: 'snow2', label: { fr: 'Flocon', en: 'Snowflake' } },
+  { id: 'tree_petit', file: 'tree_petit2', label: { fr: 'Petit sapin', en: 'Small tree' } },
 ] as const
 
 /** World scale for ornament GLBs. Avoids minimumPixelSize so ornaments shrink with distance like the tree; tune if too small/large at typical viewing distance. */
