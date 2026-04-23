@@ -3399,33 +3399,34 @@ async function init() {
     if (onboardingOpen) return
     if (isEditableTarget(ev.target)) return
     if (!ev.altKey || ev.ctrlKey || ev.metaKey) return
-    const k = ev.key.toLowerCase()
-    if (k === 'h') {
+    // Use physical key codes so shortcuts stay stable across keyboard layouts (e.g. macOS Option on TR/FR layouts).
+    const code = ev.code
+    if (code === 'KeyH') {
       if (!hangBtn.disabled) hangBtn.click()
       ev.preventDefault()
       return
     }
-    if (k === 'c') {
+    if (code === 'KeyC') {
       if (!camCityBtn.disabled) camCityBtn.click()
       ev.preventDefault()
       return
     }
-    if (k === 't') {
+    if (code === 'KeyT') {
       if (!camTreeBtn.disabled) camTreeBtn.click()
       ev.preventDefault()
       return
     }
-    if (k === 'g') {
+    if (code === 'KeyG') {
       guideBtn.click()
       ev.preventDefault()
       return
     }
-    if (k === 'p') {
+    if (code === 'KeyP') {
       if (!postcardBtn.disabled) postcardBtn.click()
       ev.preventDefault()
       return
     }
-    if (k === 'b' && panelToggleBtn) {
+    if (code === 'KeyB' && panelToggleBtn) {
       panelToggleBtn.click()
       ev.preventDefault()
     }
