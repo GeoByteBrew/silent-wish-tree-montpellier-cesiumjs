@@ -301,7 +301,7 @@ function hashStringToUnit(seed: string): number {
 /** Small deterministic east-west tilt jitter (degrees), stable per ornament instance. */
 function ornamentEastWestJitterDeg(seed: string): number {
   const u = hashStringToUnit(seed)
-  const choices = [-90, -36, -30, 30, 36, 90]
+  const choices = [-90, -60, -30, 30, 60, 90]
   const idx = Math.min(choices.length - 1, Math.floor(u * choices.length))
   return choices[idx]
 }
