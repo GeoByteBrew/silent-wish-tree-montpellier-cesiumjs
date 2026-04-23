@@ -1161,6 +1161,29 @@ async function init() {
   }
   applyAccessibilityState()
 
+  const parisTimeFmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Paris',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const parisMinutesNow = () => {
+    const parts = parisTimeFmt.formatToParts(new Date())
+    const hh = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
+    const mm = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
+    return hh * 60 + mm
+  }
+  const smoothstep = (edge0: number, edge1: number, x: number) => {
+    const t = CesiumMath.clamp((x - edge0) / (edge1 - edge0), 0, 1)
+    return t * t * (3 - 2 * t)
+  }
+  // 0 = night, 1 = daytime. Uses soft ramps around sunrise/sunset.
+  const daylightFactor = (mins: number) => {
+    const sunrise = smoothstep(6 * 60 + 25, 8 * 60 + 5, mins)
+    const sunset = 1 - smoothstep(17 * 60 + 35, 19 * 60 + 20, mins)
+    return CesiumMath.clamp(sunrise * sunset, 0, 1)
+  }
+
   // First-run helper: short 3-step guide (auto-advances, can be skipped, can be reopened).
   type OnboardingStep = { titleKey: string; bodyKey: string }
   const onboardingSteps: OnboardingStep[] = [
@@ -1711,6 +1734,43 @@ async function init() {
   viewer.scene.globe.enableLighting = true
   if (viewer.scene.sun) viewer.scene.sun.show = true
   if (viewer.scene.moon) viewer.scene.moon.show = true
+  viewer.scene.fog.enabled = true
+  viewer.scene.fog.renderable = true
+  let lastSkyBucket = -1
+  const applySkyTheme = () => {
+    const mins = parisMinutesNow()
+    const bucket = Math.floor(mins / 4)
+    if (bucket === lastSkyBucket) return
+    lastSkyBucket = bucket
+
+    const day = daylightFactor(mins)
+    const night = 1 - day
+
+    // Base sky tint: darker navy at night, gently brighter blue during daytime.
+    const r = 0.015 + day * 0.07
+    const g = 0.03 + day * 0.14
+    const b = 0.06 + day * 0.24
+    viewer.scene.backgroundColor = new Color(r, g, b, 1)
+
+    if (viewer.scene.skyAtmosphere) {
+      // Slightly enrich daytime atmosphere while keeping night subtle.
+      ;(viewer.scene.skyAtmosphere as any).brightnessShift = -0.23 + day * 0.17
+      ;(viewer.scene.skyAtmosphere as any).saturationShift = -0.08 + day * 0.12
+      ;(viewer.scene.skyAtmosphere as any).hueShift = 0
+    }
+
+    // Very light haze profile; a touch denser at night so city depth feels natural.
+    viewer.scene.fog.density = 0.0001 + night * 0.00006
+    viewer.scene.fog.minimumBrightness = 0.18 + day * 0.24
+  }
+  applySkyTheme()
+  viewer.scene.preUpdate.addEventListener(() => {
+    try {
+      applySkyTheme()
+    } catch {
+      // ignore
+    }
+  })
 
   // Camera start view:
   // - Production should be identical for every user: use env (or built-in defaults).
@@ -2335,18 +2395,6 @@ async function init() {
   const localLights: LocalLightInstance[] = []
   let lightsPhases = new Map<string, { phase: number; speed: number }>()
   let lightsTwinkleHooked = false
-  const parisTimeFmt = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/Paris',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-  const parisMinutesNow = () => {
-    const parts = parisTimeFmt.formatToParts(new Date())
-    const hh = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
-    const mm = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
-    return hh * 60 + mm
-  }
   const recomputeLocalLights = () => {
     if (!treeModel) return
     for (const l of localLights) {
@@ -2440,9 +2488,9 @@ async function init() {
       const t0 = performance.now()
       viewer.scene.preUpdate.addEventListener(() => {
         const t = (performance.now() - t0) / 1000
-        // Between 08:30 and 17:00 (Europe/Paris), dim lights by 50%.
-        const mins = parisMinutesNow()
-        const dim = mins >= 8 * 60 + 30 && mins < 17 * 60 ? 0.5 : 1.0
+        // Daytime dimming with soft ramps around sunrise/sunset.
+        const day = daylightFactor(parisMinutesNow())
+        const dim = 1 - day * 0.5
         const vf = treeViewFade
         for (const l of localLights) {
           const ent = viewer.entities.getById(l.id)
