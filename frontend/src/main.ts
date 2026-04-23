@@ -924,7 +924,7 @@ async function init() {
   let turnstileWidgetId: string | null = null
 
   const clientId = createClientId()
-  const ONBOARDING_SEEN_KEY = 'silentwish_onboarding_seen_v1'
+  const ONBOARDING_SEEN_KEY = 'silentwish_onboarding_seen_v2'
   const DEBUG_MODE =
     new URLSearchParams(window.location.search).get('debug') === '1' || window.location.hostname === 'localhost'
   let defaultLayout: LayoutV1 | null = null
@@ -1482,7 +1482,6 @@ async function init() {
 
   renderTexts()
   renderOrnaments()
-  openOnboarding(false)
 
   // Cesium init
   if (!env.ionToken) {
@@ -2746,6 +2745,8 @@ async function init() {
   void flyToStart()
   await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
   dismissInitialLoadingOverlay()
+  // Show onboarding after scene becomes interactive so users don't miss it behind startup transitions.
+  openOnboarding(false)
 
   // Optional: extra trees (model instanced at many points) — async so it doesn't block first paint.
   // Desired behavior: local-first (Vercel-served files) and fallback to ion if local fails.
