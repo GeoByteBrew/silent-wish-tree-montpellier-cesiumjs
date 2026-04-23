@@ -1701,8 +1701,8 @@ async function init() {
 
       // Soft distance fade: horizontal meters from tree (stable vs altitude jitter).
       // Full visibility below FADE_START; smoothly gone by FADE_END (was a hard cut at 90m).
-      const FADE_START_M = 98
-      const FADE_END_M = 138
+      const FADE_START_M = 148
+      const FADE_END_M = 188
       const u = CesiumMath.clamp((d - FADE_START_M) / (FADE_END_M - FADE_START_M), 0, 1)
       treeViewFade = 1 - u * u * (3 - 2 * u)
 
