@@ -2047,6 +2047,7 @@ async function init() {
   // Tree model (served by Vercel from /public/models, with ion fallback)
   const hasIonTree = Number.isFinite(env.ionTreeAssetId) && env.ionTreeAssetId > 0
   const hasIonTreeGeojson = Number.isFinite(env.ionTreeGeojsonAssetId) && env.ionTreeGeojsonAssetId > 0
+  const MAIN_TREE_VISIBLE_MAX_M = 2500
   // Single source of truth (avoid tree/tree2/tree3 confusion): always use tree3.glb.
   const treeUrlCandidates = ['/models/tree4.glb']
 
@@ -2281,10 +2282,14 @@ async function init() {
 
   let loadedTreeUrl: string | null = null
   const prefer = new URLSearchParams(window.location.search).get('tree') // 'local' | 'ion' | null
+  const applyMainTreeDistanceCulling = (m: Model) => {
+    m.distanceDisplayCondition = new DistanceDisplayCondition(0, MAIN_TREE_VISIBLE_MAX_M)
+  }
   const tryLoadLocal = async () => {
     for (const candidate of treeUrlCandidates) {
       try {
         treeModel = await Model.fromGltfAsync({ url: candidate, modelMatrix: treeModelMatrix, scale: 1.0 })
+        applyMainTreeDistanceCulling(treeModel)
         viewer.scene.primitives.add(treeModel)
         loadedTreeUrl = candidate
         setStatus(`Tree source: local (${candidate})${prefer === 'local' ? ' (forced)' : ''}`)
@@ -2303,6 +2308,7 @@ async function init() {
         modelMatrix: treeModelMatrix,
         scale: 1.0,
       })
+      applyMainTreeDistanceCulling(treeModel)
       viewer.scene.primitives.add(treeModel)
       loadedTreeUrl = null
       setStatus(`Tree source: ion (asset ${env.ionTreeAssetId})${prefer === 'ion' ? ' (forced)' : ''}`)
@@ -2442,6 +2448,7 @@ async function init() {
     // City / zoomed-out views: keep shrinking past ~900m and end much smaller so bulbs don’t dominate the tree.
     const scaleByDistance = new NearFarScalar(75, 1.0, 2600, 0.16)
     const haloScaleByDistance = new NearFarScalar(60, 1.0, 2200, 0.09)
+    const lightDistanceDisplayCondition = new ConstantProperty(new DistanceDisplayCondition(0, MAIN_TREE_VISIBLE_MAX_M))
 
     // Disable a couple of problematic anchors (requested).
     // Be tolerant of suffixes like "Light.44.001" and leading zeros.
@@ -2474,6 +2481,7 @@ async function init() {
           outlineColor: new ConstantProperty(Color.WHITE.withAlpha(0.18)),
           outlineWidth: 1,
           scaleByDistance: new ConstantProperty(scaleByDistance),
+          distanceDisplayCondition: lightDistanceDisplayCondition,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       })
@@ -2489,6 +2497,7 @@ async function init() {
           color: new ConstantProperty(warmHalo),
           outlineWidth: 0,
           scaleByDistance: new ConstantProperty(haloScaleByDistance),
+          distanceDisplayCondition: lightDistanceDisplayCondition,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       })
@@ -3309,7 +3318,8 @@ async function init() {
     const jitterSeed = seedKey ? `${seedKey}:${ornamentId}` : `${anchorIndex}:${ornamentId}`
     const aroundUpJitterDeg = ornamentAroundUpJitterDeg(jitterSeed)
     // Keep ornament vertical direction stable; rotate around its local up axis only.
-    const ornamentJitterRot = Matrix3.fromRotationZ(CesiumMath.toRadians(aroundUpJitterDeg), new Matrix3())
+    // With current correction chain, local up aligns with Y.
+    const ornamentJitterRot = Matrix3.fromRotationY(CesiumMath.toRadians(aroundUpJitterDeg), new Matrix3())
 
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
