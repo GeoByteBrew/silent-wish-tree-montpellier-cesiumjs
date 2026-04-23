@@ -349,6 +349,45 @@ button:disabled {
   padding: 10px 2px 0;
 }
 
+body.a11y-high-contrast {
+  background: #000000;
+  color: #ffffff;
+}
+
+body.a11y-high-contrast .panel,
+body.a11y-high-contrast .section,
+body.a11y-high-contrast .badge,
+body.a11y-high-contrast .credits {
+  background: rgba(0, 0, 0, 0.96);
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+body.a11y-high-contrast button,
+body.a11y-high-contrast textarea {
+  border-color: rgba(255, 255, 255, 0.6) !important;
+}
+
+body.a11y-high-contrast button.primary {
+  background: #0f2530;
+}
+
+body.a11y-reduced-motion .spinner {
+  animation: none;
+}
+
+body.a11y-reduced-motion .panel {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+  .panel {
+    transition: none !important;
+  }
+}
+
 /* Cesium UI cleanup */
 .cesium-viewer-bottom,
 .cesium-viewer-toolbar,

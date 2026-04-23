@@ -65,6 +65,9 @@ const I18N: Record<Lang, Record<string, string>> = {
     onboardingNext: 'Suivant',
     onboardingSkip: 'Passer',
     onboardingDone: 'Commencer',
+    accessibility: 'Accessibilité',
+    reducedMotion: 'Réduire les animations',
+    highContrast: 'Contraste élevé',
     footer: "Sans compte · Sans e‑mail · Les vœux individuels ne sont jamais affichés · Créé par Irem Cagbayir",
   },
   en: {
@@ -98,6 +101,9 @@ const I18N: Record<Lang, Record<string, string>> = {
     onboardingNext: 'Next',
     onboardingSkip: 'Skip',
     onboardingDone: 'Start',
+    accessibility: 'Accessibility',
+    reducedMotion: 'Reduce motion',
+    highContrast: 'High contrast',
     footer: 'No account · No email · Individual wishes are never displayed · Created by Irem Cagbayir',
   },
 }
@@ -1028,6 +1034,20 @@ async function init() {
           }
         </div>
 
+        <div class="section">
+          <div class="label-row">
+            <div class="label" id="a11yLabel"></div>
+          </div>
+          <label class="muted" style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+            <input id="reduceMotionToggle" type="checkbox" />
+            <span id="reduceMotionLabel"></span>
+          </label>
+          <label class="muted" style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+            <input id="highContrastToggle" type="checkbox" />
+            <span id="highContrastLabel"></span>
+          </label>
+        </div>
+
         ${
           DEBUG_MODE
             ? `<div class="section">
@@ -1061,6 +1081,8 @@ async function init() {
   const panelToggleBtn = document.querySelector('#panelToggleBtn') as HTMLButtonElement | null
   const loadingOverlay = $('#loadingOverlay') as HTMLDivElement
   const loadingText = $('#loadingText') as HTMLDivElement
+  const REDUCED_MOTION_KEY = 'silentwish_reduced_motion_v1'
+  const HIGH_CONTRAST_KEY = 'silentwish_high_contrast_v1'
   const setLoading = (on: boolean, msg?: string) => {
     loadingOverlay.style.display = on ? 'flex' : 'none'
     if (msg) loadingText.textContent = msg
@@ -1107,6 +1129,35 @@ async function init() {
     status.textContent = statusLines.join('\n')
   }
 
+  const readStoredBool = (key: string): boolean | null => {
+    try {
+      const v = localStorage.getItem(key)
+      if (v === '1') return true
+      if (v === '0') return false
+      return null
+    } catch {
+      return null
+    }
+  }
+  const writeStoredBool = (key: string, value: boolean) => {
+    try {
+      localStorage.setItem(key, value ? '1' : '0')
+    } catch {
+      // ignore
+    }
+  }
+  let reducedMotion = readStoredBool(REDUCED_MOTION_KEY) ?? window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  let highContrast = readStoredBool(HIGH_CONTRAST_KEY) ?? false
+  const applyAccessibilityState = () => {
+    document.body.classList.toggle('a11y-high-contrast', highContrast)
+    document.body.classList.toggle('a11y-reduced-motion', reducedMotion)
+    const reduceMotionToggle = document.querySelector('#reduceMotionToggle') as HTMLInputElement | null
+    const highContrastToggle = document.querySelector('#highContrastToggle') as HTMLInputElement | null
+    if (reduceMotionToggle) reduceMotionToggle.checked = reducedMotion
+    if (highContrastToggle) highContrastToggle.checked = highContrast
+  }
+  applyAccessibilityState()
+
   // First-run helper: short 3-step guide (auto-advances, can be skipped, can be reopened).
   type OnboardingStep = { titleKey: string; bodyKey: string }
   const onboardingSteps: OnboardingStep[] = [
@@ -1121,6 +1172,8 @@ async function init() {
   const onboardingNextBtn = $('#onboardingNextBtn') as HTMLButtonElement
   const onboardingSkipBtn = $('#onboardingSkipBtn') as HTMLButtonElement
   const guideBtn = $('#guideBtn') as HTMLButtonElement
+  const reduceMotionToggle = $('#reduceMotionToggle') as HTMLInputElement
+  const highContrastToggle = $('#highContrastToggle') as HTMLInputElement
   let onboardingOpen = false
   let onboardingIdx = 0
   let onboardingTimer: number | null = null
@@ -1195,6 +1248,16 @@ async function init() {
     if (ev.key === 'Escape') closeOnboarding(true)
   })
   guideBtn.onclick = () => openOnboarding(true)
+  reduceMotionToggle.onchange = () => {
+    reducedMotion = !!reduceMotionToggle.checked
+    writeStoredBool(REDUCED_MOTION_KEY, reducedMotion)
+    applyAccessibilityState()
+  }
+  highContrastToggle.onchange = () => {
+    highContrast = !!highContrastToggle.checked
+    writeStoredBool(HIGH_CONTRAST_KEY, highContrast)
+    applyAccessibilityState()
+  }
 
   // Mobile right-panel drawer toggle
   const PANEL_COLLAPSED_KEY = 'silentwish_panel_collapsed_v1'
@@ -1442,6 +1505,9 @@ async function init() {
     ;($('#camCityBtn') as HTMLButtonElement).textContent = t('camCity')
     ;($('#camTreeBtn') as HTMLButtonElement).textContent = t('camTree')
     ;($('#guideBtn') as HTMLButtonElement).textContent = t('guide')
+    ;($('#a11yLabel') as HTMLDivElement).textContent = t('accessibility')
+    ;($('#reduceMotionLabel') as HTMLSpanElement).textContent = t('reducedMotion')
+    ;($('#highContrastLabel') as HTMLSpanElement).textContent = t('highContrast')
     ;($('#revealBtn') as HTMLButtonElement).textContent = t('reveal')
     ;($('#footerText') as HTMLDivElement).textContent = t('footer')
     if (onboardingOpen) renderOnboarding()
@@ -2705,7 +2771,7 @@ async function init() {
         pitch: CesiumMath.toRadians(start.pitch),
         roll: CesiumMath.toRadians(start.roll),
       },
-      duration: 0.9,
+      duration: reducedMotion ? 0.01 : 0.9,
     })
   }
 
@@ -2736,7 +2802,7 @@ async function init() {
     await viewer.camera.flyTo({
       destination: Cartesian3.fromDegrees(lon, lat, height),
       orientation: { heading: CesiumMath.toRadians(heading), pitch: CesiumMath.toRadians(pitch), roll: CesiumMath.toRadians(roll) },
-      duration: 1.2,
+      duration: reducedMotion ? 0.01 : 1.2,
     })
   }
 
