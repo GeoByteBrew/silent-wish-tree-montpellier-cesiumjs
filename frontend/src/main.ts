@@ -55,6 +55,16 @@ const I18N: Record<Lang, Record<string, string>> = {
     reveal: 'Révélation',
     revealNotYet: 'Pas encore. Rendez-vous le 6 janvier 2026 à 19:00.',
     openLinkedIn: 'Partager sur LinkedIn',
+    guide: 'Guide',
+    onboardingTitle1: 'Bienvenue',
+    onboardingBody1: 'Choisis une décoration dans le panneau de droite.',
+    onboardingTitle2: 'Accroche ton vœu',
+    onboardingBody2: 'Écris un vœu (140 max), valide le captcha, puis clique sur Accrocher.',
+    onboardingTitle3: 'Navigue dans la scène',
+    onboardingBody3: 'Glisser: tourner · Molette: zoomer · Boutons caméra: revenir à l’arbre.',
+    onboardingNext: 'Suivant',
+    onboardingSkip: 'Passer',
+    onboardingDone: 'Commencer',
     footer: "Sans compte · Sans e‑mail · Les vœux individuels ne sont jamais affichés · Créé par Irem Cagbayir",
   },
   en: {
@@ -78,6 +88,16 @@ const I18N: Record<Lang, Record<string, string>> = {
     reveal: 'Reveal',
     revealNotYet: 'Not yet. See you on Jan 6, 2026 at 19:00.',
     openLinkedIn: 'Share on LinkedIn',
+    guide: 'Guide',
+    onboardingTitle1: 'Welcome',
+    onboardingBody1: 'Pick an ornament from the right panel.',
+    onboardingTitle2: 'Hang your wish',
+    onboardingBody2: 'Write a wish (max 140), complete captcha, then press Hang.',
+    onboardingTitle3: 'Move around the scene',
+    onboardingBody3: 'Drag: rotate · Wheel: zoom · Camera buttons: refocus on the tree.',
+    onboardingNext: 'Next',
+    onboardingSkip: 'Skip',
+    onboardingDone: 'Start',
     footer: 'No account · No email · Individual wishes are never displayed · Created by Irem Cagbayir',
   },
 }
@@ -890,6 +910,7 @@ async function init() {
   let turnstileWidgetId: string | null = null
 
   const clientId = createClientId()
+  const ONBOARDING_SEEN_KEY = 'silentwish_onboarding_seen_v1'
   const DEBUG_MODE =
     new URLSearchParams(window.location.search).get('debug') === '1' || window.location.hostname === 'localhost'
   let defaultLayout: LayoutV1 | null = null
@@ -904,6 +925,17 @@ async function init() {
           <div class="loading-title">Loading Montpellier…</div>
           <div class="loading-sub" id="loadingText">Starting…</div>
     </div>
+        <div class="onboarding-overlay" id="onboardingOverlay" aria-live="polite" style="display:none;">
+          <div class="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+            <div class="onboarding-kicker" id="onboardingStep">1/3</div>
+            <h3 id="onboardingTitle"></h3>
+            <p id="onboardingBody" class="muted"></p>
+            <div class="row onboarding-actions">
+              <button class="ghost" id="onboardingSkipBtn" type="button"></button>
+              <button class="primary" id="onboardingNextBtn" type="button"></button>
+            </div>
+          </div>
+        </div>
         <div class="hud">
           <div class="hud-row">
             <span class="badge" id="totalBadge">…</span>
@@ -963,6 +995,7 @@ async function init() {
           <div class="row">
             <button class="ghost" id="camCityBtn"></button>
             <button class="ghost" id="camTreeBtn"></button>
+            <button class="ghost" id="guideBtn" type="button"></button>
           </div>
           <div class="row">
             <button class="secondary" id="postcardBtn" type="button"></button>
@@ -1059,6 +1092,95 @@ async function init() {
     while (statusLines.length > 6) statusLines.shift()
     status.textContent = statusLines.join('\n')
   }
+
+  // First-run helper: short 3-step guide (auto-advances, can be skipped, can be reopened).
+  type OnboardingStep = { titleKey: string; bodyKey: string }
+  const onboardingSteps: OnboardingStep[] = [
+    { titleKey: 'onboardingTitle1', bodyKey: 'onboardingBody1' },
+    { titleKey: 'onboardingTitle2', bodyKey: 'onboardingBody2' },
+    { titleKey: 'onboardingTitle3', bodyKey: 'onboardingBody3' },
+  ]
+  const onboardingOverlay = $('#onboardingOverlay') as HTMLDivElement
+  const onboardingTitle = $('#onboardingTitle') as HTMLHeadingElement
+  const onboardingBody = $('#onboardingBody') as HTMLParagraphElement
+  const onboardingStep = $('#onboardingStep') as HTMLDivElement
+  const onboardingNextBtn = $('#onboardingNextBtn') as HTMLButtonElement
+  const onboardingSkipBtn = $('#onboardingSkipBtn') as HTMLButtonElement
+  const guideBtn = $('#guideBtn') as HTMLButtonElement
+  let onboardingOpen = false
+  let onboardingIdx = 0
+  let onboardingTimer: number | null = null
+  const clearOnboardingTimer = () => {
+    if (onboardingTimer != null) window.clearTimeout(onboardingTimer)
+    onboardingTimer = null
+  }
+  const markOnboardingSeen = () => {
+    try {
+      localStorage.setItem(ONBOARDING_SEEN_KEY, '1')
+    } catch {
+      // ignore
+    }
+  }
+  const onboardingSeen = () => {
+    try {
+      return localStorage.getItem(ONBOARDING_SEEN_KEY) === '1'
+    } catch {
+      return false
+    }
+  }
+  const renderOnboarding = () => {
+    const s = onboardingSteps[onboardingIdx] ?? onboardingSteps[0]
+    onboardingStep.textContent = `${onboardingIdx + 1}/${onboardingSteps.length}`
+    onboardingTitle.textContent = t(s.titleKey)
+    onboardingBody.textContent = t(s.bodyKey)
+    onboardingSkipBtn.textContent = t('onboardingSkip')
+    onboardingNextBtn.textContent = onboardingIdx >= onboardingSteps.length - 1 ? t('onboardingDone') : t('onboardingNext')
+  }
+  const scheduleOnboardingAdvance = () => {
+    if (!onboardingOpen) return
+    clearOnboardingTimer()
+    onboardingTimer = window.setTimeout(() => {
+      if (!onboardingOpen) return
+      if (onboardingIdx < onboardingSteps.length - 1) {
+        onboardingIdx++
+        renderOnboarding()
+        scheduleOnboardingAdvance()
+      } else closeOnboarding(true)
+    }, Math.round(20000 / onboardingSteps.length))
+  }
+  const closeOnboarding = (markSeen: boolean) => {
+    onboardingOpen = false
+    onboardingOverlay.style.display = 'none'
+    clearOnboardingTimer()
+    if (markSeen) markOnboardingSeen()
+  }
+  const openOnboarding = (force = false) => {
+    if (!force && onboardingSeen()) return
+    onboardingOpen = true
+    onboardingIdx = 0
+    onboardingOverlay.style.display = 'flex'
+    renderOnboarding()
+    scheduleOnboardingAdvance()
+  }
+  onboardingNextBtn.onclick = () => {
+    if (!onboardingOpen) return
+    if (onboardingIdx < onboardingSteps.length - 1) {
+      onboardingIdx++
+      renderOnboarding()
+      scheduleOnboardingAdvance()
+      return
+    }
+    closeOnboarding(true)
+  }
+  onboardingSkipBtn.onclick = () => closeOnboarding(true)
+  onboardingOverlay.addEventListener('click', (ev) => {
+    if (ev.target === onboardingOverlay) closeOnboarding(true)
+  })
+  window.addEventListener('keydown', (ev) => {
+    if (!onboardingOpen) return
+    if (ev.key === 'Escape') closeOnboarding(true)
+  })
+  guideBtn.onclick = () => openOnboarding(true)
 
   // Mobile right-panel drawer toggle
   const PANEL_COLLAPSED_KEY = 'silentwish_panel_collapsed_v1'
@@ -1305,8 +1427,10 @@ async function init() {
     ;($('#camLabel') as HTMLDivElement).textContent = t('camera')
     ;($('#camCityBtn') as HTMLButtonElement).textContent = t('camCity')
     ;($('#camTreeBtn') as HTMLButtonElement).textContent = t('camTree')
+    ;($('#guideBtn') as HTMLButtonElement).textContent = t('guide')
     ;($('#revealBtn') as HTMLButtonElement).textContent = t('reveal')
     ;($('#footerText') as HTMLDivElement).textContent = t('footer')
+    if (onboardingOpen) renderOnboarding()
 
     ;($('#langFr') as HTMLButtonElement).classList.toggle('active', lang === 'fr')
     ;($('#langEn') as HTMLButtonElement).classList.toggle('active', lang === 'en')
@@ -1344,6 +1468,7 @@ async function init() {
 
   renderTexts()
   renderOrnaments()
+  openOnboarding(false)
 
   // Cesium init
   if (!env.ionToken) {
