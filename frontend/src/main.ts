@@ -280,6 +280,20 @@ function formatLocalTimestamp(date = new Date()): string {
   )}`
 }
 
+function buildShareCaption(lang: Lang, stamp: string, wishNo: number | null): string[] {
+  const title = lang === 'fr' ? 'Montpellier – Arbre à vœux silencieux – 2026' : 'Montpellier – Silent Wish Tree – 2026'
+  const wishLine =
+    wishNo && wishNo > 0
+      ? lang === 'fr'
+        ? `Vœu #${wishNo} · ${stamp}`
+        : `Wish #${wishNo} · ${stamp}`
+      : lang === 'fr'
+        ? `Partagé : ${stamp}`
+        : `Shared: ${stamp}`
+  const tagLine = '#Montpellier #SilentWishTree2026'
+  return [title, wishLine, tagLine]
+}
+
 function injectTurnstileScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector('script[data-turnstile]')
@@ -3213,8 +3227,9 @@ async function init() {
   }
 
   // Stats + Reveal
-  async function fetchStats() {
-    if (!env.supabaseUrl || !env.supabaseAnonKey) return
+  let latestTotalWishes: number | null = null
+  async function fetchStats(): Promise<number | null> {
+    if (!env.supabaseUrl || !env.supabaseAnonKey) return null
     try {
       const r = await fetch(`${env.supabaseUrl}/functions/v1/stats`, {
         headers: {
@@ -3222,11 +3237,13 @@ async function init() {
           apikey: env.supabaseAnonKey,
         },
       })
-      if (!r.ok) return
+      if (!r.ok) return null
       const j = (await r.json()) as { totalWishes: number }
-      ;($('#totalBadge') as HTMLSpanElement).textContent = `${t('total')}: ${j.totalWishes}`
+      latestTotalWishes = Number.isFinite(j.totalWishes) ? j.totalWishes : null
+      ;($('#totalBadge') as HTMLSpanElement).textContent = `${t('total')}: ${latestTotalWishes ?? 0}`
+      return latestTotalWishes
     } catch {
-      // ignore
+      return null
     }
   }
   void fetchStats()
@@ -3320,10 +3337,7 @@ async function init() {
         await new Promise<void>((r) => requestAnimationFrame(() => r()))
       }
       const stamp = formatLocalTimestamp()
-      const caption =
-        lang === 'fr'
-          ? ['Montpellier – Arbre à vœux silencieux – 2026', `Partagé : ${stamp} (Montpellier)`]
-          : ['Montpellier – Silent Wish Tree – 2026', `Shared: ${stamp} (Montpellier)`]
+      const caption = buildShareCaption(lang, stamp, latestTotalWishes)
       const dataUrl = await screenshotWithCaption(viewer, caption, { frameLang: lang })
       downloadDataUrl(`silent-wish-postcard-${lang}.png`, dataUrl)
     } catch (e) {
@@ -3383,13 +3397,10 @@ async function init() {
       const j = (await r.json()) as { ok: boolean; id: string; anchor_index: number }
       if (j?.id) placedWishIds.add(j.id)
       await placeLocalOrnament(j.anchor_index, selectedOrnament)
-      void fetchStats()
+      const totalNow = await fetchStats()
 
       const stamp = formatLocalTimestamp()
-      const caption =
-        lang === 'fr'
-          ? ['Montpellier – Arbre à vœux silencieux – 2026', `Partagé : ${stamp} (Montpellier)`]
-          : ['Montpellier – Silent Wish Tree – 2026', `Shared: ${stamp} (Montpellier)`]
+      const caption = buildShareCaption(lang, stamp, totalNow ?? latestTotalWishes)
 
       const dataUrl = await screenshotWithCaption(viewer, caption, {
         watermark: lang === 'fr' ? 'Souvenir de Montpellier' : 'Montpellier memory',
