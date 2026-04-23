@@ -289,6 +289,21 @@ function formatLocalTimestamp(date = new Date()): string {
   )}`
 }
 
+function hashStringToUnit(seed: string): number {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0) / 4294967295
+}
+
+/** Small deterministic east-west tilt jitter (degrees), stable per ornament instance. */
+function ornamentEastWestJitterDeg(seed: string): number {
+  const u = hashStringToUnit(seed)
+  return (u * 2 - 1) * 7.5 // [-7.5°, +7.5°]
+}
+
 function buildShareCaption(lang: Lang, stamp: string, wishNo: number | null): string[] {
   const title = lang === 'fr' ? 'Montpellier – Arbre à vœux silencieux – 2026' : 'Montpellier – Silent Wish Tree – 2026'
   const wishLine =
@@ -3042,7 +3057,7 @@ async function init() {
               scale: extraScale * localScaleMult,
               // Extra trees can appear to "slide" against photorealistic tiles at very long distances
               // due to tile LOD morphing. Limit visibility to near/mid range for visual stability.
-              distanceDisplayCondition: new DistanceDisplayCondition(0, 800),
+              distanceDisplayCondition: new DistanceDisplayCondition(0, 2500),
             },
           })
           extraTreeEntities.push(id)
@@ -3280,7 +3295,7 @@ async function init() {
   void initExtraTreesSubsystem()
 
   // Local ornament placement
-  async function placeLocalOrnament(anchorIndex: number, ornamentId: OrnamentId) {
+  async function placeLocalOrnament(anchorIndex: number, ornamentId: OrnamentId, seedKey?: string) {
     const orn = ORNAMENTS.find((o) => o.id === ornamentId)
     const file = orn?.file ?? ornamentId
     const url = `/models/ornaments/${file}.glb`
@@ -3289,6 +3304,9 @@ async function init() {
     // In this project we already had to apply an X -90° correction on the tree in Blender,
     // so ornaments need the same axis correction to hang upright.
     const ornamentTiltFixRot = Matrix3.fromRotationX(CesiumMath.toRadians(-90), new Matrix3())
+    const jitterSeed = seedKey ? `${seedKey}:${ornamentId}` : `${anchorIndex}:${ornamentId}`
+    const eastWestJitterDeg = ornamentEastWestJitterDeg(jitterSeed)
+    const ornamentJitterRot = Matrix3.fromRotationX(CesiumMath.toRadians(eastWestJitterDeg), new Matrix3())
 
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
@@ -3305,7 +3323,8 @@ async function init() {
       const t = Matrix4.getTranslation(rel, new Cartesian3())
       const r = Matrix4.getRotation(rel, new Matrix3())
       const rFixed = Matrix3.multiply(r, ornamentTiltFixRot, new Matrix3())
-      anchorMatrix = Matrix4.fromRotationTranslation(rFixed, t, new Matrix4())
+      const rJitter = Matrix3.multiply(rFixed, ornamentJitterRot, new Matrix3())
+      anchorMatrix = Matrix4.fromRotationTranslation(rJitter, t, new Matrix4())
       worldMatrix = Matrix4.multiply(treeModel.modelMatrix, anchorMatrix, new Matrix4())
     } else if (treeModel) {
       // Fallback: drop near tree (kept as backup)
@@ -3318,7 +3337,8 @@ async function init() {
       const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
       // Fallback: we don't have an anchor rotation, so just tilt in ENU space at the ornament position.
       const base = Matrix4.fromTranslation(pos, new Matrix4())
-      const rot4 = Matrix4.fromRotationTranslation(ornamentTiltFixRot, Cartesian3.ZERO, new Matrix4())
+      const fallbackRot = Matrix3.multiply(ornamentTiltFixRot, ornamentJitterRot, new Matrix3())
+      const rot4 = Matrix4.fromRotationTranslation(fallbackRot, Cartesian3.ZERO, new Matrix4())
       worldMatrix = Matrix4.multiply(base, rot4, new Matrix4())
     }
     try {
@@ -3367,7 +3387,7 @@ async function init() {
         placedWishIds.add(it.id)
         placed++
         // Fire-and-forget-ish, but await to avoid spawning hundreds at once.
-        await placeLocalOrnament(it.anchor_index, it.ornament_type)
+        await placeLocalOrnament(it.anchor_index, it.ornament_type, it.id)
       }
       if (placed) setStatus(`Loaded ${placed} ornaments from Supabase.`)
     } catch {
@@ -3582,7 +3602,7 @@ async function init() {
       }
       const j = (await r.json()) as { ok: boolean; id: string; anchor_index: number }
       if (j?.id) placedWishIds.add(j.id)
-      await placeLocalOrnament(j.anchor_index, selectedOrnament)
+      await placeLocalOrnament(j.anchor_index, selectedOrnament, j.id)
       const totalNow = await fetchStats()
 
       const stamp = formatLocalTimestamp()
