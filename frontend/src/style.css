@@ -334,6 +334,13 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button:focus-visible,
+textarea:focus-visible,
+input[type='checkbox']:focus-visible {
+  outline: 2px solid rgba(103, 231, 255, 0.95);
+  outline-offset: 2px;
+}
+
 .turnstile {
   min-height: 66px;
 }
@@ -369,6 +376,12 @@ body.a11y-high-contrast textarea {
 
 body.a11y-high-contrast button.primary {
   background: #0f2530;
+}
+
+body.a11y-high-contrast button:focus-visible,
+body.a11y-high-contrast textarea:focus-visible,
+body.a11y-high-contrast input[type='checkbox']:focus-visible {
+  outline: 2px solid #ffffff;
 }
 
 body.a11y-reduced-motion .spinner {

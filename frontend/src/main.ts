@@ -68,6 +68,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     accessibility: 'Accessibilité',
     reducedMotion: 'Réduire les animations',
     highContrast: 'Contraste élevé',
+    shortcutsHint: 'Raccourcis: Alt+H accrocher · Alt+C ville · Alt+T arbre · Alt+G guide · Alt+P carte · Alt+B panneau',
     footer: "Sans compte · Sans e‑mail · Les vœux individuels ne sont jamais affichés · Créé par Irem Cagbayir",
   },
   en: {
@@ -104,6 +105,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     accessibility: 'Accessibility',
     reducedMotion: 'Reduce motion',
     highContrast: 'High contrast',
+    shortcutsHint: 'Shortcuts: Alt+H hang · Alt+C city · Alt+T tree · Alt+G guide · Alt+P postcard · Alt+B panel',
     footer: 'No account · No email · Individual wishes are never displayed · Created by Irem Cagbayir',
   },
 }
@@ -1046,6 +1048,7 @@ async function init() {
             <input id="highContrastToggle" type="checkbox" />
             <span id="highContrastLabel"></span>
           </label>
+          <div class="muted" id="shortcutHint" style="font-size:12px;margin-top:10px;"></div>
         </div>
 
         ${
@@ -1169,12 +1172,14 @@ async function init() {
   const onboardingTitle = $('#onboardingTitle') as HTMLHeadingElement
   const onboardingBody = $('#onboardingBody') as HTMLParagraphElement
   const onboardingStep = $('#onboardingStep') as HTMLDivElement
+  const onboardingCard = document.querySelector('.onboarding-card') as HTMLDivElement
   const onboardingNextBtn = $('#onboardingNextBtn') as HTMLButtonElement
   const onboardingSkipBtn = $('#onboardingSkipBtn') as HTMLButtonElement
   const guideBtn = $('#guideBtn') as HTMLButtonElement
   const reduceMotionToggle = $('#reduceMotionToggle') as HTMLInputElement
   const highContrastToggle = $('#highContrastToggle') as HTMLInputElement
   let onboardingOpen = false
+  let onboardingLastFocus: HTMLElement | null = null
   let onboardingIdx = 0
   let onboardingTimer: number | null = null
   const clearOnboardingTimer = () => {
@@ -1220,14 +1225,17 @@ async function init() {
     onboardingOverlay.style.display = 'none'
     clearOnboardingTimer()
     if (markSeen) markOnboardingSeen()
+    onboardingLastFocus?.focus?.()
   }
   const openOnboarding = (force = false) => {
     if (!force && onboardingSeen()) return
+    onboardingLastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     onboardingOpen = true
     onboardingIdx = 0
     onboardingOverlay.style.display = 'flex'
     renderOnboarding()
     scheduleOnboardingAdvance()
+    window.setTimeout(() => onboardingNextBtn.focus(), 0)
   }
   onboardingNextBtn.onclick = () => {
     if (!onboardingOpen) return
@@ -1245,7 +1253,25 @@ async function init() {
   })
   window.addEventListener('keydown', (ev) => {
     if (!onboardingOpen) return
-    if (ev.key === 'Escape') closeOnboarding(true)
+    if (ev.key === 'Escape') {
+      closeOnboarding(true)
+      return
+    }
+    if (ev.key !== 'Tab') return
+    const focusables = onboardingCard?.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+    if (!focusables || !focusables.length) return
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    const active = document.activeElement as HTMLElement | null
+    if (ev.shiftKey && active === first) {
+      ev.preventDefault()
+      last.focus()
+      return
+    }
+    if (!ev.shiftKey && active === last) {
+      ev.preventDefault()
+      first.focus()
+    }
   })
   guideBtn.onclick = () => openOnboarding(true)
   reduceMotionToggle.onchange = () => {
@@ -1508,6 +1534,7 @@ async function init() {
     ;($('#a11yLabel') as HTMLDivElement).textContent = t('accessibility')
     ;($('#reduceMotionLabel') as HTMLSpanElement).textContent = t('reducedMotion')
     ;($('#highContrastLabel') as HTMLSpanElement).textContent = t('highContrast')
+    ;($('#shortcutHint') as HTMLDivElement).textContent = t('shortcutsHint')
     ;($('#revealBtn') as HTMLButtonElement).textContent = t('reveal')
     ;($('#footerText') as HTMLDivElement).textContent = t('footer')
     if (onboardingOpen) renderOnboarding()
@@ -1986,7 +2013,10 @@ async function init() {
         }
       } else setStatus('Ion GeoJSON loaded but no Point found; using env/default coordinates.')
     } catch (e) {
-      setStatus(`Failed to load ion GeoJSON for tree location. Details: ${e instanceof Error ? e.message : String(e)}`)
+      // Keep this technical detail in debug only; normal users should not see ion/auth noise.
+      if (DEBUG_MODE) {
+        setStatus(`Failed to load ion GeoJSON for tree location. Details: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
   }
 
@@ -3358,6 +3388,54 @@ async function init() {
   const postcardPeyrouToggle = $('#postcardPeyrouToggle') as HTMLInputElement
   const wishInput = $('#wishInput') as HTMLTextAreaElement
   const newSessionBtn = $('#newSessionBtn') as HTMLButtonElement
+  const camCityBtn = $('#camCityBtn') as HTMLButtonElement
+  const camTreeBtn = $('#camTreeBtn') as HTMLButtonElement
+  const isEditableTarget = (target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) return false
+    const tag = target.tagName
+    return target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+  }
+  window.addEventListener('keydown', (ev) => {
+    if (onboardingOpen) return
+    if (isEditableTarget(ev.target)) return
+    if (!ev.altKey || ev.ctrlKey || ev.metaKey) return
+    const k = ev.key.toLowerCase()
+    if (k === 'h') {
+      if (!hangBtn.disabled) hangBtn.click()
+      ev.preventDefault()
+      return
+    }
+    if (k === 'c') {
+      if (!camCityBtn.disabled) camCityBtn.click()
+      ev.preventDefault()
+      return
+    }
+    if (k === 't') {
+      if (!camTreeBtn.disabled) camTreeBtn.click()
+      ev.preventDefault()
+      return
+    }
+    if (k === 'g') {
+      guideBtn.click()
+      ev.preventDefault()
+      return
+    }
+    if (k === 'p') {
+      if (!postcardBtn.disabled) postcardBtn.click()
+      ev.preventDefault()
+      return
+    }
+    if (k === 'b' && panelToggleBtn) {
+      panelToggleBtn.click()
+      ev.preventDefault()
+    }
+  })
+  panelToggleBtn?.setAttribute('aria-keyshortcuts', 'Alt+B')
+  hangBtn.setAttribute('aria-keyshortcuts', 'Alt+H')
+  camCityBtn.setAttribute('aria-keyshortcuts', 'Alt+C')
+  camTreeBtn.setAttribute('aria-keyshortcuts', 'Alt+T')
+  guideBtn.setAttribute('aria-keyshortcuts', 'Alt+G')
+  postcardBtn.setAttribute('aria-keyshortcuts', 'Alt+P')
 
   if (env.turnstileSiteKey) {
     await injectTurnstileScript()
