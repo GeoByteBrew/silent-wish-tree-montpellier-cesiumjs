@@ -8,6 +8,7 @@ import {
   Color,
   ColorBlendMode,
   ColorMaterialProperty,
+  DistanceDisplayCondition,
   ConstantProperty,
   ConstantPositionProperty,
   HeadingPitchRoll,
@@ -3039,7 +3040,9 @@ async function init() {
             model: {
               uri: url,
               scale: extraScale * localScaleMult,
-              minimumPixelSize: 24,
+              // Extra trees can appear to "slide" against photorealistic tiles at very long distances
+              // due to tile LOD morphing. Limit visibility to near/mid range for visual stability.
+              distanceDisplayCondition: new DistanceDisplayCondition(0, 700),
             },
           })
           extraTreeEntities.push(id)
