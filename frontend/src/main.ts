@@ -298,8 +298,8 @@ function hashStringToUnit(seed: string): number {
   return (h >>> 0) / 4294967295
 }
 
-/** Small deterministic east-west tilt jitter (degrees), stable per ornament instance. */
-function ornamentEastWestJitterDeg(seed: string): number {
+/** Small deterministic around-up-axis jitter (degrees), stable per ornament instance. */
+function ornamentAroundUpJitterDeg(seed: string): number {
   const u = hashStringToUnit(seed)
   const choices = [-90, -60, -30, 30, 60, 90]
   const idx = Math.min(choices.length - 1, Math.floor(u * choices.length))
@@ -3307,8 +3307,9 @@ async function init() {
     // so ornaments need the same axis correction to hang upright.
     const ornamentTiltFixRot = Matrix3.fromRotationX(CesiumMath.toRadians(-90), new Matrix3())
     const jitterSeed = seedKey ? `${seedKey}:${ornamentId}` : `${anchorIndex}:${ornamentId}`
-    const eastWestJitterDeg = ornamentEastWestJitterDeg(jitterSeed)
-    const ornamentJitterRot = Matrix3.fromRotationX(CesiumMath.toRadians(eastWestJitterDeg), new Matrix3())
+    const aroundUpJitterDeg = ornamentAroundUpJitterDeg(jitterSeed)
+    // Keep ornament vertical direction stable; rotate around its local up axis only.
+    const ornamentJitterRot = Matrix3.fromRotationZ(CesiumMath.toRadians(aroundUpJitterDeg), new Matrix3())
 
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
