@@ -2491,7 +2491,7 @@ async function init() {
         // Daytime dimming with soft ramps around sunrise/sunset.
         const day = daylightFactor(parisMinutesNow())
         const dim = 1 - day * 0.5
-        const vf = treeViewFade
+        const haloFade = treeViewFade * treeViewFade
         for (const l of localLights) {
           const ent = viewer.entities.getById(l.id)
           const g = ent?.point as any
@@ -2499,9 +2499,10 @@ async function init() {
           const meta = lightsPhases.get(l.id)
           if (!c || !meta || typeof c.setValue !== 'function') continue
           const s = 0.6 + 0.4 * Math.pow(0.5 + 0.5 * Math.sin(t * meta.speed + meta.phase), 2)
-          if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, (0.75 + 0.25 * s) * dim * vf))
-          // Halo twinkle opacity reduced by 50% as well.
-          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, (0.06 + 0.11 * s) * dim * vf))
+          // Keep core bulbs visible at distance; only daylight dimming and twinkle affect alpha.
+          if (l.id.includes(':core:')) c.setValue(new Color(1.0, 0.9, 0.65, (0.75 + 0.25 * s) * dim))
+          // Fade halos out with distance (stronger curve), so distant view keeps points but not glow blobs.
+          else c.setValue(new Color(haloRgb.r, haloRgb.g, haloRgb.b, (0.06 + 0.11 * s) * dim * haloFade))
         }
       })
     }
