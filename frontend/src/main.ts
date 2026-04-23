@@ -3042,7 +3042,7 @@ async function init() {
               scale: extraScale * localScaleMult,
               // Extra trees can appear to "slide" against photorealistic tiles at very long distances
               // due to tile LOD morphing. Limit visibility to near/mid range for visual stability.
-              distanceDisplayCondition: new DistanceDisplayCondition(0, 700),
+              distanceDisplayCondition: new DistanceDisplayCondition(0, 800),
             },
           })
           extraTreeEntities.push(id)
