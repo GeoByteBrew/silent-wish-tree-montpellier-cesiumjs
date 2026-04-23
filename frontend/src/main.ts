@@ -61,14 +61,14 @@ const I18N: Record<Lang, Record<string, string>> = {
     onboardingTitle2: 'Accroche ton vœu',
     onboardingBody2: 'Écris un vœu (140 max), valide le captcha, puis clique sur Accrocher.',
     onboardingTitle3: 'Navigue dans la scène',
-    onboardingBody3: 'Glisser: tourner · Molette: zoomer · Boutons caméra: revenir à l’arbre.',
+    onboardingBody3: 'Glisser: tourner · Molette: zoomer · Raccourcis clavier: C ville · T arbre · G guide · B panneau.',
     onboardingNext: 'Suivant',
     onboardingSkip: 'Passer',
     onboardingDone: 'Commencer',
     accessibility: 'Accessibilité',
     reducedMotion: 'Réduire les animations',
     highContrast: 'Contraste élevé',
-    shortcutsHint: 'Raccourcis: Alt+H accrocher · Alt+C ville · Alt+T arbre · Alt+G guide · Alt+P carte · Alt+B panneau',
+    shortcutsHint: 'Raccourcis: C ville · T arbre · G guide · B panneau',
     footer: "Sans compte · Sans e‑mail · Les vœux individuels ne sont jamais affichés · Créé par Irem Cagbayir",
   },
   en: {
@@ -98,14 +98,14 @@ const I18N: Record<Lang, Record<string, string>> = {
     onboardingTitle2: 'Hang your wish',
     onboardingBody2: 'Write a wish (max 140), complete captcha, then press Hang.',
     onboardingTitle3: 'Move around the scene',
-    onboardingBody3: 'Drag: rotate · Wheel: zoom · Camera buttons: refocus on the tree.',
+    onboardingBody3: 'Drag: rotate · Wheel: zoom · Keyboard shortcuts: C city · T tree · G guide · B panel.',
     onboardingNext: 'Next',
     onboardingSkip: 'Skip',
     onboardingDone: 'Start',
     accessibility: 'Accessibility',
     reducedMotion: 'Reduce motion',
     highContrast: 'High contrast',
-    shortcutsHint: 'Shortcuts: Alt+H hang · Alt+C city · Alt+T tree · Alt+G guide · Alt+P postcard · Alt+B panel',
+    shortcutsHint: 'Shortcuts: C city · T tree · G guide · B panel',
     footer: 'No account · No email · Individual wishes are never displayed · Created by Irem Cagbayir',
   },
 }
@@ -3398,14 +3398,9 @@ async function init() {
   window.addEventListener('keydown', (ev) => {
     if (onboardingOpen) return
     if (isEditableTarget(ev.target)) return
-    if (!ev.altKey || ev.ctrlKey || ev.metaKey) return
+    if (ev.altKey || ev.ctrlKey || ev.metaKey) return
     // Use physical key codes so shortcuts stay stable across keyboard layouts (e.g. macOS Option on TR/FR layouts).
     const code = ev.code
-    if (code === 'KeyH') {
-      if (!hangBtn.disabled) hangBtn.click()
-      ev.preventDefault()
-      return
-    }
     if (code === 'KeyC') {
       if (!camCityBtn.disabled) camCityBtn.click()
       ev.preventDefault()
@@ -3421,22 +3416,15 @@ async function init() {
       ev.preventDefault()
       return
     }
-    if (code === 'KeyP') {
-      if (!postcardBtn.disabled) postcardBtn.click()
-      ev.preventDefault()
-      return
-    }
     if (code === 'KeyB' && panelToggleBtn) {
       panelToggleBtn.click()
       ev.preventDefault()
     }
   })
-  panelToggleBtn?.setAttribute('aria-keyshortcuts', 'Alt+B')
-  hangBtn.setAttribute('aria-keyshortcuts', 'Alt+H')
-  camCityBtn.setAttribute('aria-keyshortcuts', 'Alt+C')
-  camTreeBtn.setAttribute('aria-keyshortcuts', 'Alt+T')
-  guideBtn.setAttribute('aria-keyshortcuts', 'Alt+G')
-  postcardBtn.setAttribute('aria-keyshortcuts', 'Alt+P')
+  panelToggleBtn?.setAttribute('aria-keyshortcuts', 'B')
+  camCityBtn.setAttribute('aria-keyshortcuts', 'C')
+  camTreeBtn.setAttribute('aria-keyshortcuts', 'T')
+  guideBtn.setAttribute('aria-keyshortcuts', 'G')
 
   if (env.turnstileSiteKey) {
     await injectTurnstileScript()
