@@ -261,6 +261,22 @@ const ORNAMENTS = [
 /** World scale for ornament GLBs. Avoids minimumPixelSize so ornaments shrink with distance like the tree; tune if too small/large at typical viewing distance. */
 const ORNAMENT_MODEL_WORLD_SCALE = 1.6
 
+function hashStringToUnit(seed: string): number {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0) / 4294967295
+}
+
+/** Deterministic random yaw around local Y axis (degrees). */
+function ornamentYRandomDeg(seed: string): number {
+  const choices = [30, 60, 90]
+  const idx = Math.min(choices.length - 1, Math.floor(hashStringToUnit(seed) * choices.length))
+  return choices[idx]
+}
+
 type OrnamentId = (typeof ORNAMENTS)[number]['id']
 const ORNAMENT_ID_SET = new Set<string>(ORNAMENTS.map((o) => o.id))
 function isOrnamentId(v: string): v is OrnamentId {
@@ -287,23 +303,6 @@ function formatLocalTimestamp(date = new Date()): string {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} · ${pad(date.getHours())}:${pad(
     date.getMinutes(),
   )}`
-}
-
-function hashStringToUnit(seed: string): number {
-  let h = 2166136261 >>> 0
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return (h >>> 0) / 4294967295
-}
-
-/** Small deterministic around-up-axis jitter (degrees), stable per ornament instance. */
-function ornamentAroundUpJitterDeg(seed: string): number {
-  const u = hashStringToUnit(seed)
-  const choices = [-90, -60, -30, 30, 60, 90]
-  const idx = Math.min(choices.length - 1, Math.floor(u * choices.length))
-  return choices[idx]
 }
 
 function buildShareCaption(lang: Lang, stamp: string, wishNo: number | null): string[] {
@@ -3316,11 +3315,7 @@ async function init() {
     // so ornaments need the same axis correction to hang upright.
     const ornamentTiltFixRot = Matrix3.fromRotationX(CesiumMath.toRadians(-90), new Matrix3())
     const jitterSeed = seedKey ? `${seedKey}:${ornamentId}` : `${anchorIndex}:${ornamentId}`
-    const aroundUpJitterDeg = ornamentAroundUpJitterDeg(jitterSeed)
-    // Keep ornament vertical direction stable; rotate around its local up axis only.
-    // With current correction chain, local up aligns with Y.
-    const ornamentJitterRot = Matrix3.fromRotationY(CesiumMath.toRadians(aroundUpJitterDeg), new Matrix3())
-
+    const ornamentYawRot = Matrix3.fromRotationY(CesiumMath.toRadians(ornamentYRandomDeg(jitterSeed)), new Matrix3())
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
     let worldMatrix: Matrix4 | null = null
@@ -3336,8 +3331,8 @@ async function init() {
       const t = Matrix4.getTranslation(rel, new Cartesian3())
       const r = Matrix4.getRotation(rel, new Matrix3())
       const rFixed = Matrix3.multiply(r, ornamentTiltFixRot, new Matrix3())
-      const rJitter = Matrix3.multiply(rFixed, ornamentJitterRot, new Matrix3())
-      anchorMatrix = Matrix4.fromRotationTranslation(rJitter, t, new Matrix4())
+      const rYawed = Matrix3.multiply(rFixed, ornamentYawRot, new Matrix3())
+      anchorMatrix = Matrix4.fromRotationTranslation(rYawed, t, new Matrix4())
       worldMatrix = Matrix4.multiply(treeModel.modelMatrix, anchorMatrix, new Matrix4())
     } else if (treeModel) {
       // Fallback: drop near tree (kept as backup)
@@ -3350,7 +3345,7 @@ async function init() {
       const pos = Matrix4.multiplyByPoint(enu, offset, new Cartesian3())
       // Fallback: we don't have an anchor rotation, so just tilt in ENU space at the ornament position.
       const base = Matrix4.fromTranslation(pos, new Matrix4())
-      const fallbackRot = Matrix3.multiply(ornamentTiltFixRot, ornamentJitterRot, new Matrix3())
+      const fallbackRot = Matrix3.multiply(ornamentTiltFixRot, ornamentYawRot, new Matrix3())
       const rot4 = Matrix4.fromRotationTranslation(fallbackRot, Cartesian3.ZERO, new Matrix4())
       worldMatrix = Matrix4.multiply(base, rot4, new Matrix4())
     }
