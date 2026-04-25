@@ -270,8 +270,8 @@ function hashStringToUnit(seed: string): number {
   return (h >>> 0) / 4294967295
 }
 
-/** Deterministic random yaw around local Y axis (degrees). */
-function ornamentYRandomDeg(seed: string): number {
+/** Deterministic random rotation around local Z axis (degrees). */
+function ornamentZRandomDeg(seed: string): number {
   const choices = [30, 60, 90]
   const idx = Math.min(choices.length - 1, Math.floor(hashStringToUnit(seed) * choices.length))
   return choices[idx]
@@ -3315,7 +3315,7 @@ async function init() {
     // so ornaments need the same axis correction to hang upright.
     const ornamentTiltFixRot = Matrix3.fromRotationX(CesiumMath.toRadians(-90), new Matrix3())
     const jitterSeed = seedKey ? `${seedKey}:${ornamentId}` : `${anchorIndex}:${ornamentId}`
-    const ornamentYawRot = Matrix3.fromRotationY(CesiumMath.toRadians(ornamentYRandomDeg(jitterSeed)), new Matrix3())
+    const ornamentYawRot = Matrix3.fromRotationZ(CesiumMath.toRadians(ornamentZRandomDeg(jitterSeed)), new Matrix3())
     // If Orn.* anchors exist in the tree GLB, use them (exact placement).
     // Otherwise, fall back to the previous procedural placement.
     let worldMatrix: Matrix4 | null = null
